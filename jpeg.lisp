@@ -1,6 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.1 2007-02-23 23:48:36 ezaikonnikov Exp $
+;;; $Id: jpeg.lisp,v 1.2 2007-02-24 00:00:12 ezaikonnikov Exp $
 ;;; Version 1.022, June 1999.
 ;;; Written by Eugene Zaikonnikov [viking@funcall.org]
 ;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
@@ -59,11 +59,14 @@
 ;;; to the Independent JPEG Group - colorspace conversion and DCT algorithms were adopted from their sources;
 ;;; to Jeff Dalton for his wise paper "Common Lisp Pitfalls".
 
-(defpackage #:jpeg (:use #:common-lisp))
-(in-package #:jpeg)
+(defpackage #:jpeg
+  (:use #:common-lisp)
+  (:export #:encode-image
+           #:decode-stream
+           #:decode-image
+           #:jpeg-to-bmp))
 
-(eval-when (compile)
-  (export '(encode-image decode-image jpeg-to-bmp)))
+(in-package #:jpeg)
 
 (declaim (inline csize write-stuffed quantize get-average zigzag encode-block llm-dct descale crunch colorspace-convert subsample
                  inverse-llm-dct dequantize upsample extend recieve decode-ac decode-dc decode-block izigzag write-bits))
@@ -651,7 +654,7 @@
 
 ;;; Function that maps value into SSSS
 (defun csize (n)
-    (declare #.*optimize* (type fixnum n val LSB MSB))
+    (declare #.*optimize* (type fixnum n))
     (svref *csize* (plus n 1023)))
 
 ;;; zigzag ordering
@@ -731,7 +734,7 @@
 ;;; Encodes block using specified huffman tables, returns new pred (DC prediction value)
 ;;; and last code written to stream for padding
 (defun encode-block (block tables pred s)
-  (declare #.*optimize* (type fixnum pred newpred diff dcpos)
+  (declare #.*optimize* (type fixnum pred)
            (type (simple-vector *) block))
   (let* ((ehufsi-dc (first (first tables)))
          (ehufco-dc (second (first tables)))
@@ -740,7 +743,7 @@
          (newpred (svref block 0))
          (diff (minus newpred pred))
          (dcpos (csize diff)))
-    (declare (type fixnum pred newpred diff pos)
+    (declare (type fixnum pred newpred diff dcpos)
              (dynamic-extent diff dcpos))
     ;; writing dc code first
     (write-bits (svref ehufco-dc dcpos) (svref ehufsi-dc dcpos) s)
@@ -1589,25 +1592,31 @@
     (when (= (descriptor-ncomp image) 3)
       (inverse-colorspace-convert image))))
 
+(defun decode-stream (stream)
+  (unless (= (read-marker stream) *M_SOI*)
+    (error "Unrecognized JPEG format"))
+  (let* ((image (make-descriptor))
+         (marker (interpret-markers image 0 stream)))
+    (cond ((= *M_SOF0* marker) (decode-frame image stream)
+           (values (descriptor-buffer image)
+                   (descriptor-height image)
+                   (descriptor-width image)
+                   (descriptor-ncomp image)))
+          (t (error "Unsupported JPEG format")))))
+
 ;;; Top level decoder function
 (defun decode-image (filename)
-  (with-open-file
-      (s filename :direction :input :element-type 'unsigned-byte)
-    (unless (= (read-marker s) *M_SOI*)
-      (error "Unrecognized JPEG format"))
-    (let* ((image (make-descriptor))
-           (marker (interpret-markers image 0 s)))
-      (cond ((= *M_SOF0* marker) (decode-frame image s)
-             (values (descriptor-buffer image) (descriptor-height image) (descriptor-width image)))
-            (t (error "Unsupported JPEG format"))))))
+  (with-open-file (in filename :direction :input :element-type 'unsigned-byte)
+    (decode-stream in)))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Here's some useful routines
+;;; Here are some useful routines
 
 ;;; Produces outfile (Windows 24-bit bitmap) from a JPEG infile
 (defun jpeg-to-bmp (&key infile outfile)
   (with-open-file (o outfile :direction :output :element-type 'unsigned-byte)
-    (multiple-value-bind (rgb h w)
+    (multiple-value-bind (rgb h w number-components)
         (decode-image infile)
       (let* ((compl (rem w 4))
              (len (+ 54 (* h w 3) (mul compl h))))
@@ -1644,15 +1653,25 @@
         (write-byte 24 o) ;bitcount, 24-bit BMP
         (write-byte 0 o)
         (write-sequence (make-array 24 :initial-element 0 :element-type 'unsigned-byte) o) ;the rest of header
-        (loop for y fixnum from (1- h) downto 0
-              for ypos fixnum = (* y 3 w) do
-              (loop for x fixnum from ypos to (plus ypos (* (1- w) 3)) by 3 do
-                    (write-byte (the unsigned-byte (svref rgb x)) o)
-                    (write-byte (the unsigned-byte (svref rgb (1+ x))) o)
-                    (write-byte (the unsigned-byte (svref rgb (plus 2 x))) o))
-              (loop for i fixnum from 0 below compl do ;adjusting to double-word
-                    (write-byte 0 o)))))))
-
+        (ecase number-components
+          (1
+           (loop :for y :from (1- h) :downto 0 :do
+                 (loop :for x :from (1- w) :downto 0 :do
+                       (let ((grey (svref rgb (+ x (* y w)))))
+                         (write-byte grey o)
+                         (write-byte grey o)
+                         (write-byte grey o)))
+                 (dotimes (i compl)
+                   (write-byte 0 o))))
+          (3
+           (loop for y fixnum from (1- h) downto 0
+                 for ypos fixnum = (* y 3 w) do
+                 (loop for x fixnum from ypos to (plus ypos (* (1- w) 3)) by 3 do
+                       (write-byte (the unsigned-byte (svref rgb x)) o)
+                       (write-byte (the unsigned-byte (svref rgb (1+ x))) o)
+                       (write-byte (the unsigned-byte (svref rgb (plus 2 x))) o))
+                 (loop for i fixnum from 0 below compl do ;adjusting to double-word
+                       (write-byte 0 o)))))))))
 
 
 ;;; Provides simple user interface for encoder: quality may vary 1 to 5 (decreasing)
