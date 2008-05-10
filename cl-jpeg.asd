@@ -1,8 +1,8 @@
 ;;;; -*- Mode: Lisp; Package: User; -*-
 
-(defpackage #:cl-jpeg-system (:use #:asdf #:cl))
-(in-package #:cl-jpeg-system)
-
-(defsystem :cl-jpeg
+(asdf:defsystem :cl-jpeg
+  :name "cl-jpeg"
+  :version 1.023
+  :licence "BSD"
   :components ((:file "jpeg")))
 

@@ -1,14 +1,14 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.2 2007-02-24 00:00:12 ezaikonnikov Exp $
-;;; Version 1.022, June 1999.
+;;; $Id: jpeg.lisp,v 1.3 2008-05-10 05:53:19 charmon Exp $
+;;; Version 1.023, May 2008
 ;;; Written by Eugene Zaikonnikov [viking@funcall.org]
 ;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
 ;;; This software is distributed under the terms of BSD-like license
 ;;; [see LICENSE for details]
-;;; That was qute some time ago - I'd wrote it better now [E.Z., 2001]
+;;; That was quite some time ago - I'd wrote it better now [E.Z., 2001]
 
-;;; Known to work with Lispworks 4 and Allegro CL 5
+;;; Known to work with Lispworks 4 and Allegro CL 5 and SBCL 1.0.16
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Creation of this software was sponsored by Kelly E. Murray
@@ -99,28 +99,32 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Here we define some constants (markers, quantization and huffman tables etc.)
 
+(defmacro define-constant (name value &optional doc)
+  `(defconstant ,name (if (boundp ',name) (symbol-value ',name) ,value)
+     ,@(when doc (list doc))))
+
 (eval-when (:compile-toplevel :load-toplevel)
 
 ;;; Source huffman tables for the encoder
-(defconstant *luminance-dc-bits*
+(define-constant *luminance-dc-bits*
   #(#x00 #x01 #x05 #x01 #x01 #x01 #x01 #x01
      #x01 #x00 #x00 #x00 #x00 #x00 #x00 #x00))
 
-(defconstant *luminance-dc-values*
+(define-constant *luminance-dc-values*
   #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
-(defconstant *chrominance-dc-bits*
+(define-constant *chrominance-dc-bits*
   #(#x00 #x03 #x01 #x01 #x01 #x01 #x01 #x01
      #x01 #x01 #x01 #x00 #x00 #x00 #x00 #x00))
 
-(defconstant *chrominance-dc-values*
+(define-constant *chrominance-dc-values*
   #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
-(defconstant *luminance-ac-bits*
+(define-constant *luminance-ac-bits*
   #(#x00 #x02 #x01 #x03 #x03 #x02 #x04 #x03
      #x05 #x05 #x04 #x04 #x00 #x00 #x01 #x7d))
 
-(defconstant *luminance-ac-values*
+(define-constant *luminance-ac-values*
   #(#x01 #x02 #x03 #x00 #x04 #x11 #x05 #x12
      #x21 #x31 #x41 #x06 #x13 #x51 #x61 #x07
      #x22 #x71 #x14 #x32 #x81 #x91 #xa1 #x08
@@ -143,11 +147,11 @@
      #xf1 #xf2 #xf3 #xf4 #xf5 #xf6 #xf7 #xf8
      #xf9 #xfa))
 
-(defconstant *chrominance-ac-bits*
+(define-constant *chrominance-ac-bits*
   #(#x00 #x02 #x01 #x02 #x04 #x04 #x03 #x04
      #x07 #x05 #x04 #x04 #x00 #x01 #x02 #x77))
 
-(defconstant *chrominance-ac-values*
+(define-constant *chrominance-ac-values*
   #(#x00 #x01 #x02 #x03 #x11 #x04 #x05 #x21
      #x31 #x06 #x12 #x41 #x51 #x07 #x61 #x71
      #x13 #x22 #x32 #x81 #x08 #x14 #x42 #x91
@@ -171,7 +175,7 @@
      #xf9 #xfa))
 
 ;;;Zigzag encoding matrix
-(defconstant *zigzag-index*
+(define-constant *zigzag-index*
   #(#(0  1  5  6 14 15 27 28)
     #(2  4  7 13 16 26 29 42)
     #(3  8 12 17 25 30 41 43)
@@ -184,7 +188,7 @@
 ;;; Temporary buffer for zigzag encoding and decoding
 (defvar *zz-result* (make-array 64 :element-type 'unsigned-byte))
 
-(defconstant *zzbuf*
+(define-constant *zzbuf*
   #(#(0  0  0  0  0  0  0  0)
     #(0  0  0  0  0  0  0  0)
     #(0  0  0  0  0  0  0  0)
@@ -293,10 +297,10 @@
 (finish-output)
 )
 
-(defconstant *q-tables* (vector *q-luminance* *q-chrominance*))
+(define-constant *q-tables* (vector *q-luminance* *q-chrominance*))
 
 ;;; This table is used to map coefficients into SSSS value
-(defconstant *csize* (make-array 2047 
+(define-constant *csize* (make-array 2047 
 				 :initial-contents
 				 (loop for i fixnum from 0 to 2046
 				       collecting (integer-length (abs (minus i 1023))))))
@@ -881,127 +885,131 @@
       (list ehufsi ehufco))))
 
 ;;; Main encoder function (user interface)
-(defun encode-image (filename image ncomp h w &key (q-tabs *q-tables*) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
+(defun encode-image-stream (out-stream image ncomp h w &key (q-tabs *q-tables*) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
   (declare #.*optimize*
            (type fixnum ncomp h w q-factor)
            (type (simple-vector *) image))
+  (when (= ncomp 1) 
+    (setq sampling '((1 1))))
+  (let* ((wd (loop for entry in sampling maximize (first entry)))
+         (ht (loop for entry in sampling maximize (second entry)))
+         (isampling (convert-sampling sampling wd ht))
+         (height (ash ht 3))
+         (width (ash wd 3))
+         (YUV (make-array ncomp
+                          :initial-contents
+                          (loop for i fixnum from 0 below ncomp collecting
+                               (make-array height
+                                           :initial-contents
+                                           (loop for j fixnum from 0 below height
+                                              collecting (make-array width))))))
+         (sampled-buf (make-array (mul ht wd)
+                                  :initial-contents
+                                  (loop for b fixnum from 0 below (mul ht wd) 
+                                     collecting (make-array 8 
+                                                            :initial-contents
+                                                            (loop for i fixnum from 0 to 7
+                                                               collecting (make-array 8))))))
+         (preds (make-array ncomp :initial-element 0))
+         (tqv (case ncomp
+                (3 #(0 1 1)) ;q-tables destinations for various component numbers
+                (1 #(0))
+                (2 #(0 1))
+                (4 #(0 1 2 3))
+                (otherwise (error "Illegal number of components specified")))))
+    (cond ((/= ncomp (length sampling))
+           (error "Wrong sampling list for ~D component(s)" ncomp))
+          ((> (length q-tabs) ncomp)
+           (error "Too many quantization tables specified"))
+          ((zerop q-factor)
+           (error "Q-factor should be nonzero!"))
+          ((> (count-relation sampling) 10)
+           (error "Invalid sampling specification!")))
+    (when (< q-factor 64)
+      (let ((q-tabs2 (make-array (length q-tabs)
+                                 :initial-contents
+                                 (loop for k fixnum from 0 below (length q-tabs)
+                                    collecting (make-array 8 :initial-contents 
+                                                           (loop for i fixnum from 0 to 7
+                                                              collecting (make-array 8)))))))
+        (loop for entry across q-tabs
+           for entry2 across q-tabs2 do
+           (loop for x fixnum from 0 to 7 do
+                (loop for y fixnum from 0 to 7 do
+                     (setf (dbref entry2 x y) (the fixnum (dbref entry x y))))))
+        (setq q-tabs q-tabs2))
+      (loop for entry across q-tabs do  ;scaling all q-tables
+           (q-scale entry q-factor)))
+    (setq *prev-byte* 0)
+    (setq *prev-length* 0)
+    (if (and (/= ncomp 1) (/= ncomp 3))
+        (write-marker *M_SOI* out-stream)
+        (prepare-JFIF-stream out-stream))
+    (write-frame-header w h ncomp q-tabs sampling tqv out-stream) ;frame header
+    ;;writing scan header
+    (write-marker *M_SOS* out-stream)
+    (write-byte 0 out-stream)           ;length
+    (write-byte (plus 6 (ash ncomp 1)) out-stream) 
+    (write-byte ncomp out-stream)    ;number of components in the scan
+    (loop for Cj from 0 below ncomp do
+         (write-byte Cj out-stream)     ;component ID
+         (write-byte (if (zerop Cj) 0 17) out-stream)) ;TdTa
+    (write-byte 0 out-stream)                          ;Ss
+    (write-byte 63 out-stream)                         ;Se
+    (write-byte 0 out-stream)                          ;AhAl
+      
+    (let ((luminance-tabset (list
+                             (build-tables *luminance-dc-bits* *luminance-dc-values*)
+                             (build-tables *luminance-ac-bits* *luminance-ac-values*)))
+          (chrominance-tabset (list (build-tables *chrominance-dc-bits* *chrominance-dc-values*)
+                                    (build-tables *chrominance-ac-bits* *chrominance-ac-values*))))
+      (loop for dy fixnum from 0 below h by height do
+           (loop for dx fixnum from 0 below w by width do
+                (multiple-value-bind (xlim ylim)
+                    (if (= ncomp 3)
+                        (colorspace-convert image YUV dx dy h w height width)
+                        (crop-image image YUV dx dy h w height width ncomp))
+                  (declare (type fixnum xlim ylim)
+                           (dynamic-extent xlim ylim))
+                  (loop for comp across YUV
+                     for freq in sampling
+                     for ifreq across isampling
+                     for iH fixnum = (first ifreq)
+                     for iV fixnum = (second ifreq)
+                     for cn fixnum from 0
+                     for hufftabs = (if (zerop cn)
+                                        luminance-tabset
+                                        chrominance-tabset)
+                     for q-tab = (svref q-tabs (svref tqv cn)) ;choosing appropriate q-table for a component
+                     for H fixnum = (first freq)
+                     for V fixnum = (second freq) do
+                     (subsample comp sampled-buf H V (minus xlim dx) (minus ylim dy) iH iV)
+                     (loop for y fixnum from 0 below V
+                        for ypos fixnum = (if (> (plus dy (ash y 3)) ylim)
+                                              (mul (rem (ash ylim -3) V) H)
+                                              (mul y H)) do
+                        (loop for x fixnum from 0 below H
+                           for pos fixnum = (if (> (plus dx (ash x 3)) xlim)
+                                                (plus (rem (ash xlim -3) H) ypos)
+                                                (plus x ypos)) do
+                           (crunch sampled-buf pos q-tab)
+                           (setf (svref preds cn)
+                                 (encode-block (zigzag (svref sampled-buf pos))
+                                               hufftabs (svref preds cn) out-stream)))))))))
+    (unless (zerop *prev-length*)
+      (write-stuffed (deposit-field #xff ;byte padding & flushing
+                                    (byte (minus 8 *prev-length*) 0)
+                                    (ash *prev-byte* (minus 8 *prev-length*)))
+                     out-stream))
+    (write-marker *M_EOI* out-stream)))
+
+(defun encode-image (filename image ncomp h w &rest args)
   (with-open-file (out-stream filename 
                               :direction :output
                               :element-type 'unsigned-byte
                               :if-exists :supersede)
-    (when (= ncomp 1) 
-      (setq sampling '((1 1))))
-    (let* ((wd (loop for entry in sampling maximize (first entry)))
-           (ht (loop for entry in sampling maximize (second entry)))
-           (isampling (convert-sampling sampling wd ht))
-           (height (ash ht 3))
-           (width (ash wd 3))
-           (YUV (make-array ncomp
-                            :initial-contents
-                            (loop for i fixnum from 0 below ncomp collecting
-                                  (make-array height
-                                              :initial-contents
-                                              (loop for j fixnum from 0 below height
-                                                    collecting (make-array width))))))
-           (sampled-buf (make-array (mul ht wd)
-                                    :initial-contents
-                                    (loop for b fixnum from 0 below (mul ht wd) 
-                                          collecting (make-array 8 
-                                                                 :initial-contents
-                                                                 (loop for i fixnum from 0 to 7
-                                                                       collecting (make-array 8))))))
-           (preds (make-array ncomp :initial-element 0))
-           (tqv (case ncomp
-                  (3 #(0 1 1)) ;q-tables destinations for various component numbers
-                  (1 #(0))
-                  (2 #(0 1))
-                  (4 #(0 1 2 3))
-                  (otherwise (error "Illegal number of components specified")))))
-      (cond ((/= ncomp (length sampling))
-             (error "Wrong sampling list for ~D component(s)" ncomp))
-            ((> (length q-tabs) ncomp)
-             (error "Too many quantization tables specified"))
-            ((zerop q-factor)
-             (error "Q-factor should be nonzero!"))
-            ((> (count-relation sampling) 10)
-             (error "Invalid sampling specification!")))
-      (when (< q-factor 64)
-	    (let ((q-tabs2 (make-array (length q-tabs)
-				       :initial-contents
-                                       (loop for k fixnum from 0 below (length q-tabs)
-				             collecting (make-array 8 :initial-contents 
-                                                                    (loop for i fixnum from 0 to 7
-                                                                          collecting (make-array 8)))))))
-	      (loop for entry across q-tabs
-		    for entry2 across q-tabs2 do
-		    (loop for x fixnum from 0 to 7 do
-			  (loop for y fixnum from 0 to 7 do
-				(setf (dbref entry2 x y) (the fixnum (dbref entry x y))))))
-	      (setq q-tabs q-tabs2))
-	    (loop for entry across q-tabs do ;scaling all q-tables
-		  (q-scale entry q-factor)))
-      (setq *prev-byte* 0)
-      (setq *prev-length* 0)
-      (if (and (/= ncomp 1) (/= ncomp 3))
-          (write-marker *M_SOI* out-stream)
-        (prepare-JFIF-stream out-stream))
-      (write-frame-header w h ncomp q-tabs sampling tqv out-stream) ;frame header
-      ;;writing scan header
-      (write-marker *M_SOS* out-stream)
-      (write-byte 0 out-stream) ;length
-      (write-byte (plus 6 (ash ncomp 1)) out-stream) 
-      (write-byte ncomp out-stream) ;number of components in the scan
-      (loop for Cj from 0 below ncomp do
-            (write-byte Cj out-stream) ;component ID
-            (write-byte (if (zerop Cj) 0 17) out-stream)) ;TdTa
-      (write-byte 0 out-stream) ;Ss
-      (write-byte 63 out-stream) ;Se
-      (write-byte 0 out-stream) ;AhAl
-      
-      (let ((luminance-tabset (list
-                               (build-tables *luminance-dc-bits* *luminance-dc-values*)
-                               (build-tables *luminance-ac-bits* *luminance-ac-values*)))
-            (chrominance-tabset (list (build-tables *chrominance-dc-bits* *chrominance-dc-values*)
-                                      (build-tables *chrominance-ac-bits* *chrominance-ac-values*))))
-        (loop for dy fixnum from 0 below h by height do
-              (loop for dx fixnum from 0 below w by width do
-                    (multiple-value-bind (xlim ylim)
-                        (if (= ncomp 3)
-                            (colorspace-convert image YUV dx dy h w height width)
-                          (crop-image image YUV dx dy h w height width ncomp))
-                      (declare (type fixnum xlim ylim)
-                               (dynamic-extent xlim ylim))
-                      (loop for comp across YUV
-                            for freq in sampling
-                            for ifreq across isampling
-                            for iH fixnum = (first ifreq)
-                            for iV fixnum = (second ifreq)
-                            for cn fixnum from 0
-                            for hufftabs = (if (zerop cn)
-                                               luminance-tabset
-                                             chrominance-tabset)
-                            for q-tab = (svref q-tabs (svref tqv cn)) ;choosing appropriate q-table for a component
-                            for H fixnum = (first freq)
-                            for V fixnum = (second freq) do
-                            (subsample comp sampled-buf H V (minus xlim dx) (minus ylim dy) iH iV)
-                            (loop for y fixnum from 0 below V
-                                  for ypos fixnum = (if (> (plus dy (ash y 3)) ylim)
-                                                        (mul (rem (ash ylim -3) V) H)
-                                                      (mul y H)) do
-                                  (loop for x fixnum from 0 below H
-                                        for pos fixnum = (if (> (plus dx (ash x 3)) xlim)
-                                                             (plus (rem (ash xlim -3) H) ypos)
-                                                           (plus x ypos)) do
-                                        (crunch sampled-buf pos q-tab)
-                                        (setf (svref preds cn)
-                                              (encode-block (zigzag (svref sampled-buf pos))
-                                                            hufftabs (svref preds cn) out-stream)))))))))
-      (unless (zerop *prev-length*)
-        (write-stuffed (deposit-field #xff  ;byte padding & flushing
-                                      (byte (minus 8 *prev-length*) 0)
-                                      (ash *prev-byte* (minus 8 *prev-length*)))
-                       out-stream))
-      (write-marker *M_EOI* out-stream))))
+    (apply #'encode-image-stream out-stream image ncomp h w args)))
+
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
