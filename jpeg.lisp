@@ -1,6 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.3 2008-05-10 05:53:19 charmon Exp $
+;;; $Id: jpeg.lisp,v 1.4 2008-12-03 04:30:38 charmon Exp $
 ;;; Version 1.023, May 2008
 ;;; Written by Eugene Zaikonnikov [viking@funcall.org]
 ;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
@@ -71,11 +71,11 @@
 (declaim (inline csize write-stuffed quantize get-average zigzag encode-block llm-dct descale crunch colorspace-convert subsample
                  inverse-llm-dct dequantize upsample extend recieve decode-ac decode-dc decode-block izigzag write-bits))
 
-(eval-when (compile load eval)
+(eval-when (:compile-toplevel :load-toplevel :execute)
   (defvar *optimize*  '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
 ;    '(optimize (safety 1) (space 3) (debug 0) (speed 0))))
 
-(eval-when (compile load eval)
+(eval-when (:compile-toplevel :load-toplevel :execute)
 ;;; For ease of reference
 (defmacro dbref (data x y)
   `(the fixnum (svref (svref ,data ,y) ,x)))
@@ -268,7 +268,7 @@
               (loop for row across *q-luminance* do
                     (loop for q-coef fixnum across row
                           maximize (round (random 128) q-coef))))
-        (minus (get-internal-run-time) time1))
+        (#+clisp - #-clisp minus (get-internal-run-time) time1))
       (let ((time1 (get-internal-run-time)))
         (loop for i fixnum from 1 to 3000 do
               (loop for q-row across *q-luminance* do
@@ -292,7 +292,7 @@
                                      2)))
                                 (t
                                  (round val qc))))))
-                    (minus (get-internal-run-time) time1))))
+                    (#+clisp - #-clisp minus (get-internal-run-time) time1))))
 (format t "Done.~%")
 (finish-output)
 )
@@ -1070,14 +1070,15 @@
          (word (logior msb lsb)))
     word))
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
 ;;; APPn marker reading: just skipping the whole marker
-(defun read-app (s)
-  "APPn marker reading: just skipping the whole marker"
-  (loop for i fixnum from 0 below (minus (read-word s) 2) do
-        (read-byte s)))
-
+  (defun read-app (s)
+    "APPn marker reading: just skipping the whole marker"
+    (loop for i fixnum from 0 below (minus (read-word s) 2) do
+         (read-byte s)))
+  
 ;;; COM marker reading, same as read-app
-(setf (symbol-function 'read-com) #'read-app)
+  (setf (symbol-function 'read-com) #'read-app))
 
 ;;; Sets up restart interval
 (defun read-dri (image s)
