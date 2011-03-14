@@ -1,6 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.5 2011-03-14 21:44:58 charmon Exp $
+;;; $Id: jpeg.lisp,v 1.6 2011-03-14 22:49:00 charmon Exp $
 ;;; Version 1.023, May 2008
 ;;; Written by Eugene Zaikonnikov [viking@funcall.org]
 ;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
@@ -85,6 +85,9 @@
   `(the fixnum (+ (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro minus (a b)
+  #+(or clisp abcl)
+  `(- ,a ,b)
+  #-(or clisp abcl)
   `(the fixnum (- (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro mul (a b)
@@ -268,7 +271,7 @@
               (loop for row across *q-luminance* do
                     (loop for q-coef fixnum across row
                           maximize (round (random 128) q-coef))))
-        (#+clisp - #-clisp minus (get-internal-run-time) time1))
+        (minus (get-internal-run-time) time1))
       (let ((time1 (get-internal-run-time)))
         (loop for i fixnum from 1 to 3000 do
               (loop for q-row across *q-luminance* do
@@ -292,7 +295,7 @@
                                      2)))
                                 (t
                                  (round val qc))))))
-                    (#+clisp - #-clisp minus (get-internal-run-time) time1))))
+                    (minus (get-internal-run-time) time1))))
 (format t "Done.~%")
 (finish-output)
 )
