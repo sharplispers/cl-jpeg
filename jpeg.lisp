@@ -1,6 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.4 2008-12-03 04:30:38 charmon Exp $
+;;; $Id: jpeg.lisp,v 1.5 2011-03-14 21:44:58 charmon Exp $
 ;;; Version 1.023, May 2008
 ;;; Written by Eugene Zaikonnikov [viking@funcall.org]
 ;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
@@ -106,25 +106,25 @@
 (eval-when (:compile-toplevel :load-toplevel)
 
 ;;; Source huffman tables for the encoder
-(define-constant *luminance-dc-bits*
+(define-constant +luminance-dc-bits+
   #(#x00 #x01 #x05 #x01 #x01 #x01 #x01 #x01
      #x01 #x00 #x00 #x00 #x00 #x00 #x00 #x00))
 
-(define-constant *luminance-dc-values*
+(define-constant +luminance-dc-values+
   #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
-(define-constant *chrominance-dc-bits*
+(define-constant +chrominance-dc-bits+
   #(#x00 #x03 #x01 #x01 #x01 #x01 #x01 #x01
      #x01 #x01 #x01 #x00 #x00 #x00 #x00 #x00))
 
-(define-constant *chrominance-dc-values*
+(define-constant +chrominance-dc-values+
   #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
-(define-constant *luminance-ac-bits*
+(define-constant +luminance-ac-bits+
   #(#x00 #x02 #x01 #x03 #x03 #x02 #x04 #x03
      #x05 #x05 #x04 #x04 #x00 #x00 #x01 #x7d))
 
-(define-constant *luminance-ac-values*
+(define-constant +luminance-ac-values+
   #(#x01 #x02 #x03 #x00 #x04 #x11 #x05 #x12
      #x21 #x31 #x41 #x06 #x13 #x51 #x61 #x07
      #x22 #x71 #x14 #x32 #x81 #x91 #xa1 #x08
@@ -147,11 +147,11 @@
      #xf1 #xf2 #xf3 #xf4 #xf5 #xf6 #xf7 #xf8
      #xf9 #xfa))
 
-(define-constant *chrominance-ac-bits*
+(define-constant +chrominance-ac-bits+
   #(#x00 #x02 #x01 #x02 #x04 #x04 #x03 #x04
      #x07 #x05 #x04 #x04 #x00 #x01 #x02 #x77))
 
-(define-constant *chrominance-ac-values*
+(define-constant +chrominance-ac-values+
   #(#x00 #x01 #x02 #x03 #x11 #x04 #x05 #x21
      #x31 #x06 #x12 #x41 #x51 #x07 #x61 #x71
      #x13 #x22 #x32 #x81 #x08 #x14 #x42 #x91
@@ -175,7 +175,7 @@
      #xf9 #xfa))
 
 ;;;Zigzag encoding matrix
-(define-constant *zigzag-index*
+(define-constant +zigzag-index+
   #(#(0  1  5  6 14 15 27 28)
     #(2  4  7 13 16 26 29 42)
     #(3  8 12 17 25 30 41 43)
@@ -188,7 +188,7 @@
 ;;; Temporary buffer for zigzag encoding and decoding
 (defvar *zz-result* (make-array 64 :element-type 'unsigned-byte))
 
-(define-constant *zzbuf*
+(define-constant +zzbuf+
   #(#(0  0  0  0  0  0  0  0)
     #(0  0  0  0  0  0  0  0)
     #(0  0  0  0  0  0  0  0)
@@ -199,19 +199,19 @@
     #(0  0  0  0  0  0  0  0)))
 
 ;;;JPEG file markers
-(defconstant *M_COM* #xfe)
-(defconstant *M_SOF0* #xc0)
-(defconstant *M_DHT* #xc4)
-(defconstant *M_RST0* #xd0)
-(defconstant *M_RST7* #xd7)
-(defconstant *M_SOI* #xd8)
-(defconstant *M_EOI* #xd9)
-(defconstant *M_SOS* #xda)
-(defconstant *M_DQT* #xdb)
-(defconstant *M_DNL* #xdc)
-(defconstant *M_DRI* #xdd)
-(defconstant *M_DAC* #xcc)
-(defconstant *M_APP0* #xe0)
+(defconstant +M_COM+ #xfe)
+(defconstant +M_SOF0+ #xc0)
+(defconstant +M_DHT+ #xc4)
+(defconstant +M_RST0+ #xd0)
+(defconstant +M_RST7+ #xd7)
+(defconstant +M_SOI+ #xd8)
+(defconstant +M_EOI+ #xd9)
+(defconstant +M_SOS+ #xda)
+(defconstant +M_DQT+ #xdb)
+(defconstant +M_DNL+ #xdc)
+(defconstant +M_DRI+ #xdd)
+(defconstant +M_DAC+ #xcc)
+(defconstant +M_APP0+ #xe0)
 
 ;;; Default quantization tables
 (defvar *q-luminance*
@@ -297,65 +297,65 @@
 (finish-output)
 )
 
-(define-constant *q-tables* (vector *q-luminance* *q-chrominance*))
+(define-constant +q-tables+ (vector *q-luminance* *q-chrominance*))
 
 ;;; This table is used to map coefficients into SSSS value
-(define-constant *csize* (make-array 2047 
+(define-constant +csize+ (make-array 2047 
 				 :initial-contents
 				 (loop for i fixnum from 0 to 2046
 				       collecting (integer-length (abs (minus i 1023))))))
 
 ;;; Some constants for colorspace mapper
 (defconstant shift (1- (integer-length (ash most-positive-fixnum -7))))
-(defconstant *.299* (round (+ (* 0.299 (ash 1 shift)) 0.5)))
-(defconstant *.587* (round (+ (* 0.587 (ash 1 shift)) 0.5)))
-(defconstant *.114* (round (+ (* 0.114 (ash 1 shift)) 0.5)))
-(defconstant *-.1687* (round (+ (* -0.1687 (ash 1 shift)) 0.5)))
-(defconstant *-.3313* (round (+ (* -0.3313 (ash 1 shift)) 0.5)))
-(defconstant *-.4187* (round (+ (* -0.4187 (ash 1 shift)) 0.5)))
-(defconstant *-.0813* (round (+ (* -0.0813 (ash 1 shift)) 0.5)))
-(defconstant *.5* (round (+ (* 0.5 (ash 1 shift)) 0.5)))
-(defconstant uvoffset (ash 128 shift))
-(defconstant onehalf (1- (ash 1 (1- shift))))
-(defconstant r-y-off 0)
-(defconstant g-y-off 256)
-(defconstant b-y-off (* 2 256))
-(defconstant r-u-off (* 3 256))
-(defconstant g-u-off (* 4 256))
-(defconstant b-u-off (* 5 256))
-(defconstant r-v-off b-u-off)
-(defconstant g-v-off (* 6 256))
-(defconstant b-v-off (* 7 256))
+(defconstant +.299+ (round (+ (* 0.299 (ash 1 shift)) 0.5)))
+(defconstant +.587+ (round (+ (* 0.587 (ash 1 shift)) 0.5)))
+(defconstant +.114+ (round (+ (* 0.114 (ash 1 shift)) 0.5)))
+(defconstant +-.1687+ (round (+ (* -0.1687 (ash 1 shift)) 0.5)))
+(defconstant +-.3313+ (round (+ (* -0.3313 (ash 1 shift)) 0.5)))
+(defconstant +-.4187+ (round (+ (* -0.4187 (ash 1 shift)) 0.5)))
+(defconstant +-.0813+ (round (+ (* -0.0813 (ash 1 shift)) 0.5)))
+(defconstant +.5+ (round (+ (* 0.5 (ash 1 shift)) 0.5)))
+(defconstant +uvoffset+ (ash 128 shift))
+(defconstant +one-half+ (1- (ash 1 (1- shift))))
+(defconstant +r-y-off+ 0)
+(defconstant +g-y-off+ 256)
+(defconstant +b-y-off+ (* 2 256))
+(defconstant +r-u-off+ (* 3 256))
+(defconstant +g-u-off+ (* 4 256))
+(defconstant +b-u-off+ (* 5 256))
+(defconstant +r-v-off+ +b-u-off+)
+(defconstant +g-v-off+ (* 6 256))
+(defconstant +b-v-off+ (* 7 256))
 
 ;;;Direct color conversion table
 (defvar *ctab* (make-array 2048 :initial-element 0))
 
 ;;; Filling in the table
 (loop for i fixnum from 0 to 255 do
-      (setf (svref *ctab* (plus i r-y-off))
-            (mul *.299* i))
-      (setf (svref *ctab* (plus i g-y-off))
-            (mul *.587* i))
-      (setf (svref *ctab* (plus i b-y-off))
-            (mul *.114* i))
-      (setf (svref *ctab* (plus i r-u-off))
-            (mul *-.1687* i))
-      (setf (svref *ctab* (plus i g-u-off))
-            (mul *-.3313* i))
-      (setf (svref *ctab* (plus i b-u-off))
-            (+ (mul *.5* i) uvoffset onehalf))
-      (setf (svref *ctab* (plus i r-v-off))
-            (+ (mul *.5* i) uvoffset onehalf))
-      (setf (svref *ctab* (plus i g-v-off))
-            (mul *-.4187* i))
-      (setf (svref *ctab* (plus i b-v-off))
-            (mul *-.0813* i)))
+      (setf (svref *ctab* (plus i +r-y-off+))
+            (mul +.299+ i))
+      (setf (svref *ctab* (plus i +g-y-off+))
+            (mul +.587+ i))
+      (setf (svref *ctab* (plus i +b-y-off+))
+            (mul +.114+ i))
+      (setf (svref *ctab* (plus i +r-u-off+))
+            (mul +-.1687+ i))
+      (setf (svref *ctab* (plus i +g-u-off+))
+            (mul +-.3313+ i))
+      (setf (svref *ctab* (plus i +b-u-off+))
+            (+ (mul +.5+ i) +uvoffset+ +one-half+))
+      (setf (svref *ctab* (plus i +r-v-off+))
+            (+ (mul +.5+ i) +uvoffset+ +one-half+))
+      (setf (svref *ctab* (plus i +g-v-off+))
+            (mul +-.4187+ i))
+      (setf (svref *ctab* (plus i +b-v-off+))
+            (mul +-.0813+ i)))
 
 ;;; Constantsants for the inverse colorspace conversion
-(defconstant *1.40200* (round (+ (* 1.40200 (ash 1 shift)) 0.5)))
-(defconstant *1.77200* (round (+ (* 1.77200 (ash 1 shift)) 0.5)))
-(defconstant *-0.71414* (round (+ (* -0.71414 (ash 1 shift)) 0.5)))
-(defconstant *-0.34414* (round (+ (* -0.34414 (ash 1 shift)) 0.5)))
+(defconstant +1.40200+ (round (+ (* 1.40200 (ash 1 shift)) 0.5)))
+(defconstant +1.77200+ (round (+ (* 1.77200 (ash 1 shift)) 0.5)))
+(defconstant +-0.71414+ (round (+ (* -0.71414 (ash 1 shift)) 0.5)))
+(defconstant +-0.34414+ (round (+ (* -0.34414 (ash 1 shift)) 0.5)))
 
 ;;; Inverse color conversion tables
 (defvar *cr-r-tab* (make-array 256))
@@ -366,10 +366,10 @@
 ;;; Filling up the tables
 (loop for i from 0 to 255
       for x from -127 do
-      (setf (svref *cr-r-tab* i) (ash (plus (mul *1.40200* x) onehalf) (- shift)))
-      (setf (svref *cb-b-tab* i) (ash (plus (mul *1.77200* x) onehalf) (- shift)))
-      (setf (svref *cr-g-tab* i) (mul *-0.71414* x))
-      (setf (svref *cb-g-tab* i) (plus (mul *-0.34414* x) onehalf)))
+      (setf (svref *cr-r-tab* i) (ash (plus (mul +1.40200+ x) +one-half+) (- shift)))
+      (setf (svref *cb-b-tab* i) (ash (plus (mul +1.77200+ x) +one-half+) (- shift)))
+      (setf (svref *cr-g-tab* i) (mul +-0.71414+ x))
+      (setf (svref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
 
 ;;; Temporary workspace for IDCT
 (defvar *ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8))))
@@ -380,21 +380,21 @@
       (minus 13 (round (minus 31 (integer-length most-positive-fixnum)) 2))
     13))
 
-(defconstant shift-1 (1- dct-shift))
-(defconstant shift+1 (1+ dct-shift))
-(defconstant shift+4 (+ dct-shift 4))
-(defconstant FIX-0-298631336 (round (+ (* 0.298631336 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-0-390180644 (round (+ (* 0.390180644 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-0-541196100 (round (+ (* 0.541196100 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-0-765366865 (round (+ (* 0.765366865 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-0-899976223 (round (+ (* 0.899976223 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-1-175875602 (round (+ (* 1.175875602 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-1-501321110 (round (+ (* 1.501321110 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-1-847759065 (round (+ (* 1.847759065 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-1-961570560 (round (+ (* 1.961570560 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-2-053119869 (round (+ (* 2.053119869 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-2-562915447 (round (+ (* 2.562915447 (ash 1 dct-shift)) 0.5)))
-(defconstant FIX-3-072711026 (round (+ (* 3.072711026 (ash 1 dct-shift)) 0.5)))
+(defconstant +shift-1+ (1- dct-shift))
+(defconstant +shift+1+ (1+ dct-shift))
+(defconstant +shift+4+ (+ dct-shift 4))
+(defconstant +FIX-0-298631336+ (round (+ (* 0.298631336 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-0-390180644+ (round (+ (* 0.390180644 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-0-541196100+ (round (+ (* 0.541196100 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-0-765366865+ (round (+ (* 0.765366865 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-0-899976223+ (round (+ (* 0.899976223 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-1-175875602+ (round (+ (* 1.175875602 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-1-501321110+ (round (+ (* 1.501321110 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-1-847759065+ (round (+ (* 1.847759065 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-1-961570560+ (round (+ (* 1.961570560 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-2-053119869+ (round (+ (* 2.053119869 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-2-562915447+ (round (+ (* 2.562915447 (ash 1 dct-shift)) 0.5)))
+(defconstant +FIX-3-072711026+ (round (+ (* 3.072711026 (ash 1 dct-shift)) 0.5)))
 
 ;;; Post-IDCT limiting array
 (defvar *idct-limit-array* (make-array 512 :initial-element 0))
@@ -482,19 +482,19 @@
                 for b fixnum = (svref rgb pos)
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
-                (setf (dbref Y cx cy) (minus (ash (+ (svref *ctab* (plus r r-y-off))
-                                                          (svref *ctab* (plus g g-y-off))
-                                                          (svref *ctab* (plus b b-y-off)))
+                (setf (dbref Y cx cy) (minus (ash (+ (svref *ctab* (plus r +r-y-off+))
+                                                          (svref *ctab* (plus g +g-y-off+))
+                                                          (svref *ctab* (plus b +b-y-off+)))
                                                        (- shift))
                                              128))
-                (setf (dbref U cx cy) (minus (ash (+ (svref *ctab* (plus r r-u-off))
-                                                          (svref *ctab* (plus g g-u-off))
-                                                          (svref *ctab* (plus b b-u-off)))
+                (setf (dbref U cx cy) (minus (ash (+ (svref *ctab* (plus r +r-u-off+))
+                                                          (svref *ctab* (plus g +g-u-off+))
+                                                          (svref *ctab* (plus b +b-u-off+)))
                                                        (- shift))
                                              128))
-                (setf (dbref V cx cy) (minus (ash (+ (svref *ctab* (plus r r-v-off))
-                                                          (svref *ctab* (plus g g-v-off))
-                                                          (svref *ctab* (plus b b-v-off)))
+                (setf (dbref V cx cy) (minus (ash (+ (svref *ctab* (plus r +r-v-off+))
+                                                          (svref *ctab* (plus g +g-v-off+))
+                                                          (svref *ctab* (plus b +b-v-off+)))
                                                        (- shift))
                                              128))))
     (values xend yend)))
@@ -577,28 +577,28 @@
               (setf tmp12 (minus tmp1 tmp2))
               (setf (svref dptr 0) (ash (plus tmp10 tmp11) 1))
               (setf (svref dptr 4) (ash (minus tmp10 tmp11) 1))
-              (setf z1 (mul (plus tmp12 tmp13) fix-0-541196100))
-              (setf (svref dptr 2) (descale (plus z1 (mul tmp13 fix-0-765366865)) shift-1))
-              (setf (svref dptr 6) (descale (plus z1 (mul tmp12 (- fix-1-847759065))) shift-1))
+              (setf z1 (mul (plus tmp12 tmp13) +FIX-0-541196100+))
+              (setf (svref dptr 2) (descale (plus z1 (mul tmp13 +FIX-0-765366865+)) +shift-1+))
+              (setf (svref dptr 6) (descale (plus z1 (mul tmp12 (- +FIX-1-847759065+))) +shift-1+))
               (setf z1 (plus tmp4 tmp7))
               (setf z2 (plus tmp5 tmp6))
               (setf z3 (plus tmp4 tmp6))
               (setf z4 (plus tmp5 tmp7))
-              (setf z5 (mul (plus z3 z4) fix-1-175875602))
-              (setf tmp4 (mul tmp4 fix-0-298631336))
-              (setf tmp5 (mul tmp5 fix-2-053119869))
-              (setf tmp6 (mul tmp6 fix-3-072711026))
-              (setf tmp7 (mul tmp7 fix-1-501321110))
-              (setf z1 (mul z1 (- fix-0-899976223)))
-              (setf z2 (mul z2 (- fix-2-562915447)))
-              (setf z3 (mul z3 (- fix-1-961570560)))
-              (setf z4 (mul z4 (- fix-0-390180644)))
+              (setf z5 (mul (plus z3 z4) +FIX-1-175875602+))
+              (setf tmp4 (mul tmp4 +fix-0-298631336+))
+              (setf tmp5 (mul tmp5 +fix-2-053119869+))
+              (setf tmp6 (mul tmp6 +fix-3-072711026+))
+              (setf tmp7 (mul tmp7 +fix-1-501321110+))
+              (setf z1 (mul z1 (- +fix-0-899976223+)))
+              (setf z2 (mul z2 (- +fix-2-562915447+)))
+              (setf z3 (mul z3 (- +fix-1-961570560+)))
+              (setf z4 (mul z4 (- +fix-0-390180644+)))
               (incf z3 z5)
               (incf z4 z5)
-              (setf (svref dptr 7) (descale (plus3 tmp4 z1 z3) shift-1))
-              (setf (svref dptr 5) (descale (plus3 tmp5 z2 z4) shift-1))
-              (setf (svref dptr 3) (descale (plus3 tmp6 z2 z3) shift-1))
-              (setf (svref dptr 1) (descale (plus3 tmp7 z1 z4) shift-1)))
+              (setf (svref dptr 7) (descale (plus3 tmp4 z1 z3) +shift-1+))
+              (setf (svref dptr 5) (descale (plus3 tmp5 z2 z4) +shift-1+))
+              (setf (svref dptr 3) (descale (plus3 tmp6 z2 z3) +shift-1+))
+              (setf (svref dptr 1) (descale (plus3 tmp7 z1 z4) +shift-1+)))
         (loop for cnt fixnum from 7 downto 0 do ;second pass: on columns
               (setf tmp0 (plus (dbref data cnt 0) (dbref data cnt 7)))
               (setf tmp7 (minus (dbref data cnt 0) (dbref data cnt 7)))
@@ -614,28 +614,28 @@
               (setf tmp12 (minus tmp1 tmp2))
               (setf (dbref data cnt 0) (descale (plus tmp10 tmp11) 1))
               (setf (dbref data cnt 4) (descale (minus tmp10 tmp11) 1))
-              (setf z1 (mul (plus tmp12 tmp13) fix-0-541196100))
-              (setf (dbref data cnt 2) (descale (plus z1 (mul tmp13 fix-0-765366865)) shift+1))
-              (setf (dbref data cnt 6) (descale (plus z1 (mul tmp12 (- fix-1-847759065))) shift+1))
+              (setf z1 (mul (plus tmp12 tmp13) +fix-0-541196100+))
+              (setf (dbref data cnt 2) (descale (plus z1 (mul tmp13 +fix-0-765366865+)) +shift+1+))
+              (setf (dbref data cnt 6) (descale (plus z1 (mul tmp12 (- +fix-1-847759065+))) +shift+1+))
               (setf z1 (plus tmp4 tmp7))
               (setf z2 (plus tmp5 tmp6))
               (setf z3 (plus tmp4 tmp6))
               (setf z4 (plus tmp5 tmp7))
-              (setf z5 (mul (plus z3 z4) fix-1-175875602))
-              (setf tmp4 (mul tmp4 fix-0-298631336))
-              (setf tmp5 (mul tmp5 fix-2-053119869))
-              (setf tmp6 (mul tmp6 fix-3-072711026))
-              (setf tmp7 (mul tmp7 fix-1-501321110))
-              (setf z1 (mul z1 (- fix-0-899976223)))
-              (setf z2 (mul z2 (- fix-2-562915447)))
-              (setf z3 (mul z3 (- fix-1-961570560)))
-              (setf z4 (mul z4 (- fix-0-390180644)))
+              (setf z5 (mul (plus z3 z4) +fix-1-175875602+))
+              (setf tmp4 (mul tmp4 +fix-0-298631336+))
+              (setf tmp5 (mul tmp5 +fix-2-053119869+))
+              (setf tmp6 (mul tmp6 +fix-3-072711026+))
+              (setf tmp7 (mul tmp7 +fix-1-501321110+))
+              (setf z1 (mul z1 (- +fix-0-899976223+)))
+              (setf z2 (mul z2 (- +fix-2-562915447+)))
+              (setf z3 (mul z3 (- +fix-1-961570560+)))
+              (setf z4 (mul z4 (- +fix-0-390180644+)))
               (incf z3 z5)
               (incf z4 z5)
-              (setf (dbref data cnt 7) (descale (plus3 tmp4 z1 z3) shift+1))
-              (setf (dbref data cnt 5) (descale (plus3 tmp5 z2 z4) shift+1))
-              (setf (dbref data cnt 3) (descale (plus3 tmp6 z2 z3) shift+1))
-              (setf (dbref data cnt 1) (descale (plus3 tmp7 z1 z4) shift+1)))
+              (setf (dbref data cnt 7) (descale (plus3 tmp4 z1 z3) +shift+1+))
+              (setf (dbref data cnt 5) (descale (plus3 tmp5 z2 z4) +shift+1+))
+              (setf (dbref data cnt 3) (descale (plus3 tmp6 z2 z3) +shift+1+))
+              (setf (dbref data cnt 1) (descale (plus3 tmp7 z1 z4) +shift+1+)))
         (return)))
 
 ;;; Forward DCT and quantization
@@ -659,13 +659,13 @@
 ;;; Function that maps value into SSSS
 (defun csize (n)
     (declare #.*optimize* (type fixnum n))
-    (svref *csize* (plus n 1023)))
+    (svref +csize+ (plus n 1023)))
 
 ;;; zigzag ordering
 (defun zigzag (buffer)
   (declare #.*optimize* (type (simple-vector 8) buffer))
   (loop for row across buffer
-        for z-row across *zigzag-index* do
+        for z-row across +zigzag-index+ do
         (loop for x fixnum from 0 to 7 do
               (setf (svref *zz-result* (svref z-row x))
                     (the fixnum (svref row x)))))
@@ -677,7 +677,7 @@
   (write-huffman-tables out-stream)
   (write-quantization-tables q-tables out-stream)
   ;;writing frame header
-  (write-marker *M_SOF0* out-stream)
+  (write-marker +M_SOF0+ out-stream)
   (write-byte 0 out-stream) ;length
   (write-byte (plus 8 (mul 3 cn)) out-stream)
   (write-byte 8 out-stream) ;sample precision
@@ -777,7 +777,7 @@
 ;;; Emits q-tables
 (defun write-quantization-tables (tables s)
   (let ((len (plus 2 (mul 65 (length tables)))))
-    (write-marker *M_DQT* s)
+    (write-marker +M_DQT+ s)
     (write-byte (ash len -8) s) ;;;MSB
     (write-byte (logand len #xff) s) ;;;LSB
     (loop for table across tables 
@@ -792,17 +792,17 @@
 ;;; chrominance AC
 (defun write-huffman-tables (s)
   (let ((len (+ 2 (* 17 4) 
-                (length *luminance-dc-values*)
-                (length *luminance-ac-values*)
-                (length *chrominance-dc-values*)
-                (length *chrominance-ac-values*))))
-    (write-marker *M_DHT* s)
+                (length +luminance-dc-values+)
+                (length +luminance-ac-values+)
+                (length +chrominance-dc-values+)
+                (length +chrominance-ac-values+))))
+    (write-marker +M_DHT+ s)
     (write-byte (ash len -8) s) ;;;MSB
     (write-byte (logand len #xff) s) ;;;LSB
-    (write-hufftable *luminance-dc-bits* *luminance-dc-values* 0 s)
-    (write-hufftable *luminance-ac-bits* *luminance-ac-values* 16 s)
-    (write-hufftable *chrominance-dc-bits* *chrominance-dc-values* 1 s)
-    (write-hufftable *chrominance-ac-bits* *chrominance-ac-values* 17 s)))
+    (write-hufftable +luminance-dc-bits+ +luminance-dc-values+ 0 s)
+    (write-hufftable +luminance-ac-bits+ +luminance-ac-values+ 16 s)
+    (write-hufftable +chrominance-dc-bits+ +chrominance-dc-values+ 1 s)
+    (write-hufftable +chrominance-ac-bits+ +chrominance-ac-values+ 17 s)))
 
 ;;; Writes single huffman table
 (defun write-hufftable (bits vals tcti s)
@@ -818,8 +818,8 @@
 
 ;;; Writing some markers into the stream
 (defun prepare-JFIF-stream (out-stream)
-   (write-marker *M_SOI* out-stream)
-   (write-marker *M_APP0* out-stream)
+   (write-marker +M_SOI+ out-stream)
+   (write-marker +M_APP0+ out-stream)
    (write-byte 0 out-stream) ;length
    (write-byte 16 out-stream)
    (write-byte #x4a out-stream)
@@ -885,7 +885,7 @@
       (list ehufsi ehufco))))
 
 ;;; Main encoder function (user interface)
-(defun encode-image-stream (out-stream image ncomp h w &key (q-tabs *q-tables*) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
+(defun encode-image-stream (out-stream image ncomp h w &key (q-tabs +q-tables+) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
   (declare #.*optimize*
            (type fixnum ncomp h w q-factor)
            (type (simple-vector *) image))
@@ -943,11 +943,11 @@
     (setq *prev-byte* 0)
     (setq *prev-length* 0)
     (if (and (/= ncomp 1) (/= ncomp 3))
-        (write-marker *M_SOI* out-stream)
+        (write-marker +M_SOI+ out-stream)
         (prepare-JFIF-stream out-stream))
     (write-frame-header w h ncomp q-tabs sampling tqv out-stream) ;frame header
     ;;writing scan header
-    (write-marker *M_SOS* out-stream)
+    (write-marker +M_SOS+ out-stream)
     (write-byte 0 out-stream)           ;length
     (write-byte (plus 6 (ash ncomp 1)) out-stream) 
     (write-byte ncomp out-stream)    ;number of components in the scan
@@ -959,10 +959,10 @@
     (write-byte 0 out-stream)                          ;AhAl
       
     (let ((luminance-tabset (list
-                             (build-tables *luminance-dc-bits* *luminance-dc-values*)
-                             (build-tables *luminance-ac-bits* *luminance-ac-values*)))
-          (chrominance-tabset (list (build-tables *chrominance-dc-bits* *chrominance-dc-values*)
-                                    (build-tables *chrominance-ac-bits* *chrominance-ac-values*))))
+                             (build-tables +luminance-dc-bits+ +luminance-dc-values+)
+                             (build-tables +luminance-ac-bits+ +luminance-ac-values+)))
+          (chrominance-tabset (list (build-tables +chrominance-dc-bits+ +chrominance-dc-values+)
+                                    (build-tables +chrominance-ac-bits+ +chrominance-ac-values+))))
       (loop for dy fixnum from 0 below h by height do
            (loop for dx fixnum from 0 below w by width do
                 (multiple-value-bind (xlim ylim)
@@ -1001,7 +1001,7 @@
                                     (byte (minus 8 *prev-length*) 0)
                                     (ash *prev-byte* (minus 8 *prev-length*)))
                      out-stream))
-    (write-marker *M_EOI* out-stream)))
+    (write-marker +M_EOI+ out-stream)))
 
 (defun encode-image (filename image ncomp h w &rest args)
   (with-open-file (out-stream filename 
@@ -1092,7 +1092,7 @@
   (declare #.*optimize*
            (type (simple-vector *) inbuf zzbuf))
   "Performs inverse zigzag block arrangement"
-  (loop for zrow across *zigzag-index*
+  (loop for zrow across +zigzag-index+
 	for row across zzbuf do
 	(loop for pos fixnum across zrow
 	      for x fixnum from 0 do
@@ -1170,11 +1170,11 @@
         (setf term 0)
         (cond ((= #xe0 (logand #xf0 mk)) ;APPn marker
                (read-app s))
-              (t (cond ((= mk *M_DAC*) (error "Arithmetic encoding not supported"))
-                       ((= mk *M_DRI*) (read-dri image s))
-                       ((= mk *M_DHT*) (read-dht image s))
-                       ((= mk *M_DQT*) (read-dqt image s))
-                       ((= mk *M_COM*) (read-com s))
+              (t (cond ((= mk +M_DAC+) (error "Arithmetic encoding not supported"))
+                       ((= mk +M_DRI+) (read-dri image s))
+                       ((= mk +M_DHT+) (read-dht image s))
+                       ((= mk +M_DQT+) (read-dqt image s))
+                       ((= mk +M_COM+) (read-com s))
                        (t (return mk)))))))
 
 ;;; EXTEND procedure, as described in the standard
@@ -1202,9 +1202,9 @@
             (let ((b2 (read-byte s)))
               (declare (type fixnum b2))
               (cond ((zerop b2))
-                    ((<= *M_RST0* b2 *M_RST7*)
+                    ((<= +M_RST0+ b2 +M_RST7+)
                      (throw 'marker 'restart))
-                    ((= b2 *M_DNL*)
+                    ((= b2 +M_DNL+)
                      (error "DNL marker is not supported"))
                     (t (throw 'marker b2))))))
         (decf cnt)
@@ -1325,9 +1325,9 @@
           else do
           (setf z2 (dequantize dptr 2 block q-table))
           (setf z3 (dequantize dptr 6 block q-table))
-          (setf z1 (mul (plus z2 z3) FIX-0-541196100))
-          (setf tmp2 (plus z1 (mul z3 (- FIX-1-847759065))))
-          (setf tmp3 (plus z1 (mul z2 FIX-0-765366865)))
+          (setf z1 (mul (plus z2 z3) +FIX-0-541196100+))
+          (setf tmp2 (plus z1 (mul z3 (- +FIX-1-847759065+))))
+          (setf tmp3 (plus z1 (mul z2 +FIX-0-765366865+)))
           (setf z2 (dequantize dptr 0 block q-table))
           (setf z3 (dequantize dptr 4 block q-table))
           (setf tmp0 (ash (plus z2 z3) dct-shift))
@@ -1344,29 +1344,29 @@
           (setf z2 (plus tmp1 tmp2))
           (setf z3 (plus tmp0 tmp2))
           (setf z4 (plus tmp1 tmp3))
-          (setf z5 (mul (plus z3 z4) FIX-1-175875602))
-          (setf tmp0 (mul tmp0 FIX-0-298631336))
-          (setf tmp1 (mul tmp1 FIX-2-053119869))
-          (setf tmp2 (mul tmp2 FIX-3-072711026))
-          (setf tmp3 (mul tmp3 FIX-1-501321110))
-          (setf z1 (mul z1 (- FIX-0-899976223)))
-          (setf z2 (mul z2 (- FIX-2-562915447)))
-          (setf z3 (mul z3 (- FIX-1-961570560)))
-          (setf z4 (mul z4 (- FIX-0-390180644)))
+          (setf z5 (mul (plus z3 z4) +FIX-1-175875602+))
+          (setf tmp0 (mul tmp0 +FIX-0-298631336+))
+          (setf tmp1 (mul tmp1 +FIX-2-053119869+))
+          (setf tmp2 (mul tmp2 +FIX-3-072711026+))
+          (setf tmp3 (mul tmp3 +FIX-1-501321110+))
+          (setf z1 (mul z1 (- +FIX-0-899976223+)))
+          (setf z2 (mul z2 (- +FIX-2-562915447+)))
+          (setf z3 (mul z3 (- +FIX-1-961570560+)))
+          (setf z4 (mul z4 (- +FIX-0-390180644+)))
           (incf z3 z5)
           (incf z4 z5)
           (incf tmp0 (plus z1 z3))
           (incf tmp1 (plus z2 z4))
           (incf tmp2 (plus z2 z3))
           (incf tmp3 (plus z1 z4))
-          (setf (dbref *ws* dptr 0) (descale (plus tmp10 tmp3) shift-1))
-          (setf (dbref *ws* dptr 7) (descale (minus tmp10 tmp3) shift-1))
-          (setf (dbref *ws* dptr 1) (descale (plus tmp11 tmp2) shift-1))
-          (setf (dbref *ws* dptr 6) (descale (minus tmp11 tmp2) shift-1))
-          (setf (dbref *ws* dptr 2) (descale (plus tmp12 tmp1) shift-1))
-          (setf (dbref *ws* dptr 5) (descale (minus tmp12 tmp1) shift-1))
-          (setf (dbref *ws* dptr 3) (descale (plus tmp13 tmp0) shift-1))
-          (setf (dbref *ws* dptr 4) (descale (minus tmp13 tmp0) shift-1)))
+          (setf (dbref *ws* dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
+          (setf (dbref *ws* dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
+          (setf (dbref *ws* dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
+          (setf (dbref *ws* dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
+          (setf (dbref *ws* dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
+          (setf (dbref *ws* dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
+          (setf (dbref *ws* dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
+          (setf (dbref *ws* dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
     
     (loop for row across block ;iterating over rows
 	  for inrow across *ws*
@@ -1383,9 +1383,9 @@
 	  else do
 	  (setf z2 (svref inrow 2))
 	  (setf z3 (svref inrow 6))
-	  (setf z1 (mul (plus z2 z3) FIX-0-541196100))
-	  (setf tmp2 (plus z1 (mul z3 (- FIX-1-847759065))))
-	  (setf tmp3 (plus z1 (mul z2 FIX-0-765366865)))
+	  (setf z1 (mul (plus z2 z3) +FIX-0-541196100+))
+	  (setf tmp2 (plus z1 (mul z3 (- +FIX-1-847759065+))))
+	  (setf tmp3 (plus z1 (mul z2 +FIX-0-765366865+)))
 	  (setf tmp0 (ash (plus (svref inrow 0) (svref inrow 4)) dct-shift))
 	  (setf tmp1 (ash (minus (svref inrow 0) (svref inrow 4)) dct-shift))
 	  (setf tmp10 (plus tmp0 tmp3))
@@ -1400,29 +1400,29 @@
 	  (setf z2 (plus tmp1 tmp2))
 	  (setf z3 (plus tmp0 tmp2))
 	  (setf z4 (plus tmp1 tmp3))
-	  (setf z5 (mul (plus z3 z4) FIX-1-175875602))
-	  (setf tmp0 (mul tmp0 FIX-0-298631336))
-	  (setf tmp1 (mul tmp1 FIX-2-053119869))
-	  (setf tmp2 (mul tmp2 FIX-3-072711026))
-	  (setf tmp3 (mul tmp3 FIX-1-501321110))
-	  (setf z1 (mul z1 (- FIX-0-899976223)))
-	  (setf z2 (mul z2 (- FIX-2-562915447)))
-	  (setf z3 (mul z3 (- FIX-1-961570560)))
-	  (setf z4 (mul z4 (- FIX-0-390180644)))
+	  (setf z5 (mul (plus z3 z4) +FIX-1-175875602+))
+	  (setf tmp0 (mul tmp0 +FIX-0-298631336+))
+	  (setf tmp1 (mul tmp1 +FIX-2-053119869+))
+	  (setf tmp2 (mul tmp2 +FIX-3-072711026+))
+	  (setf tmp3 (mul tmp3 +FIX-1-501321110+))
+	  (setf z1 (mul z1 (- +FIX-0-899976223+)))
+	  (setf z2 (mul z2 (- +FIX-2-562915447+)))
+	  (setf z3 (mul z3 (- +FIX-1-961570560+)))
+	  (setf z4 (mul z4 (- +FIX-0-390180644+)))
 	  (incf z3 z5)
 	  (incf z4 z5)
 	  (incf tmp0 (plus z1 z3))
 	  (incf tmp1 (plus z2 z4))
 	  (incf tmp2 (plus z2 z3))
 	  (incf tmp3 (plus z1 z4))
-	  (setf (svref row 0) (dct-limit (descale (plus tmp10 tmp3) shift+4)))
-	  (setf (svref row 7) (dct-limit (descale (minus tmp10 tmp3) shift+4)))
-	  (setf (svref row 1) (dct-limit (descale (plus tmp11 tmp2) shift+4)))
-	  (setf (svref row 6) (dct-limit (descale (minus tmp11 tmp2) shift+4)))
-	  (setf (svref row 2) (dct-limit (descale (plus tmp12 tmp1) shift+4)))
-	  (setf (svref row 5) (dct-limit (descale (minus tmp12 tmp1) shift+4)))
-	  (setf (svref row 3) (dct-limit (descale (plus tmp13 tmp0) shift+4)))
-	  (setf (svref row 4) (dct-limit (descale (minus tmp13 tmp0) shift+4))))))
+	  (setf (svref row 0) (dct-limit (descale (plus tmp10 tmp3) +shift+4+)))
+	  (setf (svref row 7) (dct-limit (descale (minus tmp10 tmp3) +shift+4+)))
+	  (setf (svref row 1) (dct-limit (descale (plus tmp11 tmp2) +shift+4+)))
+	  (setf (svref row 6) (dct-limit (descale (minus tmp11 tmp2) +shift+4+)))
+	  (setf (svref row 2) (dct-limit (descale (plus tmp12 tmp1) +shift+4+)))
+	  (setf (svref row 5) (dct-limit (descale (minus tmp12 tmp1) +shift+4+)))
+	  (setf (svref row 3) (dct-limit (descale (plus tmp13 tmp0) +shift+4+)))
+	  (setf (svref row 4) (dct-limit (descale (minus tmp13 tmp0) +shift+4+))))))
 
 ;;; Places decoded block into the image buffer, with necessary upsampling
 (defun upsample (image scan block x y H V offset nwidth nw nx dend)
@@ -1501,7 +1501,7 @@
                         for y-pos fixnum from (mul (ash y 3) V) by (ash V 3) do
 			(loop for x fixnum from 0 below blocks-x
                               for x-pos fixnum from (mul (ash x 3) H) by (ash H 3)
-			      for decoded-block = (izigzag (decode-block (descriptor-zz image) (svref tables comp) nextbit s) *zzbuf*) do
+			      for decoded-block = (izigzag (decode-block (descriptor-zz image) (svref tables comp) nextbit s) +zzbuf+) do
                               ;; DC decoding and predictor update
                               (incf (dbref decoded-block 0 0) (svref preds comp))
                               (setf (svref preds comp) (dbref decoded-block 0 0))
@@ -1594,19 +1594,19 @@
           (setf (svref (descriptor-iV image) i) (second entry)))
     (loop with term fixnum = 0
 	  for j fixnum from 0
-	  until (= term *M_EOI*) do
-	  (when (/= (interpret-markers image term s) *M_SOS*)
+	  until (= term +M_EOI+) do
+	  (when (/= (interpret-markers image term s) +M_SOS+)
 		(error "Unsupported marker in the frame header"))
 	  (setf term (decode-scan image j s)))
     (when (= (descriptor-ncomp image) 3)
       (inverse-colorspace-convert image))))
 
 (defun decode-stream (stream)
-  (unless (= (read-marker stream) *M_SOI*)
+  (unless (= (read-marker stream) +M_SOI+)
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= *M_SOF0* marker) (decode-frame image stream)
+    (cond ((= +M_SOF0+ marker) (decode-frame image stream)
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
