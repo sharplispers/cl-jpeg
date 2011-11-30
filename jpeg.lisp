@@ -77,6 +77,7 @@
   (:use #:common-lisp)
   (:export #:encode-image
            #:decode-stream
+           #:decode-stream-height-width
            #:decode-image
            #:jpeg-to-bmp))
 
@@ -219,6 +220,7 @@
 ;;;JPEG file markers
 (defconstant +M_COM+ #xfe)
 (defconstant +M_SOF0+ #xc0)
+(defconstant +M_SOF2+ #xc2)
 (defconstant +M_DHT+ #xc4)
 (defconstant +M_RST0+ #xd0)
 (defconstant +M_RST7+ #xd7)
@@ -1603,8 +1605,7 @@
                 (setf (svref buffer pv) ; RED
                       (the fixnum (limit (plus yy (svref *cr-r-tab* cr)))))))))
 
-;;; Frame decoding subroutine
-(defun decode-frame (image s)
+(defun decode-frame-beginning (image s)
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
@@ -1612,7 +1613,11 @@
         (make-array (* (setf (descriptor-height image) (read-word s)) ; height
                        (setf (descriptor-width image) (read-word s))  ; width
                        (setf (descriptor-ncomp image) (read-byte s))) ; number of components
-                    :initial-element 0))
+                    :initial-element 0)))
+
+;;; Frame decoding subroutine
+(defun decode-frame (image s)
+  (decode-frame-beginning image s)
   (loop for i fixnum from 0 below (descriptor-ncomp image)
         with hv fixnum do
         (setf (svref (descriptor-cid image) i) (read-byte s)) ; Cj
@@ -1640,6 +1645,8 @@
       (inverse-colorspace-convert image))))
 
 (defun decode-stream (stream)
+  "Return image array, height, width, and number of components. Does not support
+progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
@@ -1649,13 +1656,25 @@
                    (descriptor-height image)
                    (descriptor-width image)
                    (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format")))))
+          (t (error "Unsupported JPEG format" marker)))))
 
 ;;; Top level decoder function
 (defun decode-image (filename)
   (with-open-file (in filename :direction :input :element-type 'unsigned-byte)
     (decode-stream in)))
 
+(defun decode-stream-height-width (stream)
+  "Return the height and width of the JPEG data read from STREAM. Does less work than
+DECODE-STREAM and also supports progressive DCT-based JPEGs."
+  (unless (= (read-marker stream) +M_SOI+)
+    (error "Unrecognized JPEG format"))
+  (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
+         (marker (interpret-markers image 0 stream)))
+    (cond ((or (= +M_SOF0+ marker)
+               (= +M_SOF2+ marker)) (decode-frame-beginning image stream)
+           (values (descriptor-height image)
+                   (descriptor-width image)))
+          (t (error "Unsupported JPEG format" marker)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Here are some useful routines
