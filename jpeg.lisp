@@ -1656,7 +1656,7 @@ progressive DCT-based JPEGs."
                    (descriptor-height image)
                    (descriptor-width image)
                    (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format" marker)))))
+          (t (error "Unsupported JPEG format: ~A" marker)))))
 
 ;;; Top level decoder function
 (defun decode-image (filename)
@@ -1674,7 +1674,7 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
                (= +M_SOF2+ marker)) (decode-frame-beginning image stream)
            (values (descriptor-height image)
                    (descriptor-width image)))
-          (t (error "Unsupported JPEG format" marker)))))
+          (t (error "Unsupported JPEG format: ~A" marker)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Here are some useful routines
