@@ -9,7 +9,7 @@
 ;;; [see LICENSE for details]
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Creation of this software was sponsored by Kelly E. Murray
+;;; This software was sponsored by Kelly E. Murray
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;;; Two main functions available:
@@ -190,19 +190,6 @@
     #(21 34 37 47 50 56 59 61)
     #(35 36 48 49 57 58 62 63)))
 
-;;; Temporary buffer for zigzag encoding and decoding
-(defvar *zz-result* (make-array 64 :element-type 'unsigned-byte))
-
-(define-constant +zzbuf+
-  #(#(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)))
-
 ;;;JPEG file markers
 (defconstant +M_COM+ #xfe)
 (defconstant +M_SOF0+ #xc0)
@@ -263,45 +250,44 @@
 )
 
 ;;; Quantization performance test, each branch quantizes 30000 random matrixes
-(eval-when (:load-toplevel :compile-toplevel)
+(eval-when (:compile-toplevel)
 
-(format t "Performing compile-time optimization.. please wait.~%")
-(finish-output)
-
-(defvar *quantize-optimization*
-  (<= (let ((time1 (get-internal-run-time)))
-        (loop for i fixnum from 1 to 30000 do
-              (loop for row across +q-luminance+ do
-                    (loop for q-coef fixnum across row
-                          maximize (round (random 128) q-coef))))
-        (minus (get-internal-run-time) time1))
-      (let ((time1 (get-internal-run-time)))
-        (loop for i fixnum from 1 to 30000 do
-              (loop for q-row across +q-luminance+ do
-                    (loop for val fixnum = (random 128)
-                          for absval fixnum = (abs val)
-                          for qc fixnum across q-row
-                          maximize
-                          (cond ((< absval (ash qc -1))
-                                 0)
-                                ((<= absval qc)
-                                 (if (minusp val)
-                                     -1
-                                   1))
-                                ((<= (ash absval -1) qc)
-                                 (if (zerop (logand absval 1))
-                                     (if (minusp val)
-                                         -1
-                                       1)
-                                   (if (minusp val)
-                                       -2
-                                     2)))
-                                (t
-                                 (round val qc))))))
-                    (minus (get-internal-run-time) time1))))
-(format t "Done.~%")
-(finish-output)
-)
+  (format t "Performing compile-time optimization.. please wait.~%")
+  (finish-output)
+  
+  (defvar *quantize-optimization*
+    (<= (let ((time1 (get-internal-run-time)))
+	  (loop for i fixnum from 1 to 30000 do
+		(loop for row across +q-luminance+ do
+		      (loop for q-coef fixnum across row
+			    maximize (round (random 128) q-coef))))
+	  (minus (get-internal-run-time) time1))
+	(let ((time1 (get-internal-run-time)))
+	  (loop for i fixnum from 1 to 30000 do
+		(loop for q-row across +q-luminance+ do
+		      (loop for val fixnum = (random 128)
+			    for absval fixnum = (abs val)
+			    for qc fixnum across q-row
+			    maximize
+			    (cond ((< absval (ash qc -1))
+				   0)
+				  ((<= absval qc)
+				   (if (minusp val)
+				       -1
+				     1))
+				  ((<= (ash absval -1) qc)
+				   (if (zerop (logand absval 1))
+				       (if (minusp val)
+					   -1
+					 1)
+				     (if (minusp val)
+					 -2
+				       2)))
+				  (t
+				   (round val qc))))))
+	  (minus (get-internal-run-time) time1))))
+  (format t "Done.~%")
+  (finish-output))
 
 (define-constant +q-tables+ (vector +q-luminance+ +q-chrominance+))
 
@@ -377,9 +363,6 @@
       (setf (svref *cr-g-tab* i) (mul +-0.71414+ x))
       (setf (svref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
 
-;;; Temporary workspace for IDCT
-(defvar *ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8))))
-
 ;;; Constants for LLM DCT
 (defconstant dct-shift  ; defining DCT scaling
   (if (<= (integer-length most-positive-fixnum) 31)
@@ -409,10 +392,6 @@
       (setf (svref *idct-limit-array* i) n))
 (loop for i from 384 to 511 do
       (setf (svref *idct-limit-array* i) 255))
-
-;;; State variables for write-bits
-(defvar *prev-byte* 0)
-(defvar *prev-length* 0)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Encoder part
@@ -905,6 +884,9 @@
     (setq sampling '((1 1))))
   (let* ((wd (loop for entry in sampling maximize (first entry)))
          (ht (loop for entry in sampling maximize (second entry)))
+	 (*zz-result* (make-array 64 :element-type 'unsigned-byte))
+	 (*prev-byte* 0) ; State variables for write-bits
+	 (*prev-length* 0)
          (isampling (convert-sampling sampling wd ht))
          (height (ash ht 3))
          (width (ash wd 3))
@@ -929,6 +911,7 @@
                 (2 #(0 1))
                 (4 #(0 1 2 3))
                 (otherwise (error "Illegal number of components specified")))))
+    (declare (special *zz-rezult* *prev-byte* *prev-length*))
     (cond ((/= ncomp (length sampling))
            (error "Wrong sampling list for ~D component(s)" ncomp))
           ((> (length q-tabs) ncomp)
@@ -1486,6 +1469,7 @@
          (Vmax (loop for entry across fr maximize (second entry)))
          (x-growth (ash Hmax 3))
          (y-growth (ash Vmax 3))
+	 (*ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8)))) ; Temporary workspace for IDCT
          (freqs (make-array ncomp :initial-contents
                             (loop for i fixnum from 0 below ncomp ; collecting sampling frequencies
                                   for cid fixnum = (first (svref (scan-cdesc scan) i))
@@ -1496,6 +1480,7 @@
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
              (type (simple-vector *) freqs fr)
+	     (special *ws*)
              (dynamic-extent fr freqs))
     (catch 'marker
       (loop
@@ -1508,6 +1493,14 @@
                              collecting (vector (svref (descriptor-huff-ac image) ta)
                                                 (svref (descriptor-huff-dc image) td))))
         do (loop for comp fixnum from 0 below ncomp
+		 with zzbuf = #(#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0))
                  for pos fixnum =
                     (position (first (svref (scan-cdesc scan) comp))
                               (descriptor-cid image)) ; an offset for byte positioning
@@ -1524,7 +1517,7 @@
                                    for x-pos fixnum from (mul (ash x 3) H) by (ash H 3)
                                    for decoded-block =
                                       (izigzag (decode-block (descriptor-zz image)
-                                                             (svref tables comp) nextbit s) +zzbuf+) do
+                                                             (svref tables comp) nextbit s) zzbuf) do
                                    ;; DC decoding and predictor update
                                       (incf (dbref decoded-block 0 0) (svref preds comp))
                                       (setf (svref preds comp) (dbref decoded-block 0 0))
