@@ -40,7 +40,7 @@
 ;;; returns NIL
 ;;;
 ;;; Additionaly, you may use more user-friendly version of encode-image: encode-wrapper.
-;;; (encode-wrapper filename image ncomp h w &key quality)
+;;; (encoding-wrapper filename image ncomp h w &key quality)
 ;;; All parameters have the same meaning as in encode-image, except quality.
 ;;; It is an integer value ranging 1 to 5 which specifies
 ;;; subjective quality of a resulting image.
@@ -227,7 +227,7 @@
     #(99 99 99 99 99 99 99 99)
     #(99 99 99 99 99 99 99 99)))
 
-(defconstant *q-luminance-hi*
+(defconstant +q-luminance-hi+
   #(#(10 7 6 10 15 25 32 38)
     #(8 8 9 12 16 36 38 34)
     #(9 8 10 15 25 36 43 35)
@@ -696,8 +696,8 @@
 
 (defun write-bits (bi ni s)
   (declare #.*optimize*
-           (special *prev-length* *prev-byte*)
-           (type fixnum bi ni *prev-length* *prev-byte*)
+           ;(special *prev-length* *prev-byte*)
+           (type fixnum bi ni)
            (type stream s))
   (loop with lim fixnum = (if (> ni 8) 1 0)
         for i fixnum from lim downto 0 do
@@ -911,7 +911,8 @@
                 (2 #(0 1))
                 (4 #(0 1 2 3))
                 (otherwise (error "Illegal number of components specified")))))
-    (declare (special *zz-rezult* *prev-byte* *prev-length*))
+    (declare (special *zz-result* *prev-byte* *prev-length*)
+	     (type fixnum *prev-length* *prev-byte*))
     (cond ((/= ncomp (length sampling))
            (error "Wrong sampling list for ~D component(s)" ncomp))
           ((> (length q-tabs) ncomp)
