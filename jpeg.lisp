@@ -1,22 +1,16 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
 ;;; $Id: jpeg.lisp,v 1.6 2011-03-14 22:49:00 charmon Exp $
-;;; Version 1.023, May 2008
-;;; Written by Eugene Zaikonnikov [viking@funcall.org]
-;;; Copyright [c] 1999, Eugene Zaikonnikov <viking@funcall.org>
+;;; Version 1.3, August 2015
+;;; Written by Eugene Zaikonnikov [eugene@funcall.org]
+;;; Copyright [c] 1999,2015, Eugene Zaikonnikov <eugene@funcall.org>
+;;;               
 ;;; This software is distributed under the terms of BSD-like license
 ;;; [see LICENSE for details]
-;;; That was quite some time ago - I'd wrote it better now [E.Z., 2001]
-
-;;; Known to work with Lispworks 4 and Allegro CL 5 and SBCL 1.0.16
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Creation of this software was sponsored by Kelly E. Murray
+;;; This software was sponsored by Kelly E. Murray
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;; WARNING: IT IS HIGHLY RECOMMENDED TO SUSPEND ALL CPU-CONSUMING OS THREADS DURING
-;;; COMPILATION. OTHERWISE SYSTEM-DEPENDENT OPTIMISATIONS MAY BE MISIDENTIFIED WHICH
-;;; SHOULD RESULT IN A SUFFICIENTLY DEGRADED PERFORMANCE.
 
 ;;; Two main functions available:
 ;;;
@@ -46,7 +40,7 @@
 ;;; returns NIL
 ;;;
 ;;; Additionaly, you may use more user-friendly version of encode-image: encode-wrapper.
-;;; (encode-wrapper filename image ncomp h w &key quality)
+;;; (encoding-wrapper filename image ncomp h w &key quality)
 ;;; All parameters have the same meaning as in encode-image, except quality.
 ;;; It is an integer value ranging 1 to 5 which specifies
 ;;; subjective quality of a resulting image.
@@ -72,14 +66,6 @@
 ;;; to the Independent JPEG Group -
 ;;; colorspace conversion and DCT algorithms were adopted from their sources;
 ;;; to Jeff Dalton for his wise paper "Common Lisp Pitfalls".
-
-(defpackage #:jpeg
-  (:use #:common-lisp)
-  (:export #:encode-image
-           #:decode-stream
-           #:decode-stream-height-width
-           #:decode-image
-           #:jpeg-to-bmp))
 
 (in-package #:jpeg)
 
@@ -204,19 +190,6 @@
     #(21 34 37 47 50 56 59 61)
     #(35 36 48 49 57 58 62 63)))
 
-;;; Temporary buffer for zigzag encoding and decoding
-(defvar *zz-result* (make-array 64 :element-type 'unsigned-byte))
-
-(define-constant +zzbuf+
-  #(#(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)
-    #(0  0  0  0  0  0  0  0)))
-
 ;;;JPEG file markers
 (defconstant +M_COM+ #xfe)
 (defconstant +M_SOF0+ #xc0)
@@ -234,7 +207,7 @@
 (defconstant +M_APP0+ #xe0)
 
 ;;; Default quantization tables
-(defvar *q-luminance*
+(defconstant +q-luminance+
   #(#(16 11 10 16 24 40 51 61)
     #(12 12 14 19 26 58 60 55)
     #(14 13 16 24 40 57 69 56)
@@ -244,7 +217,7 @@
     #(49 64 78 87 103 121 120 101)
     #(72 92 95 98 112 100 103 99)))
 
-(defvar *q-chrominance*
+(defconstant +q-chrominance+
   #(#(17 18 24 47 99 99 99 99)
     #(18 21 26 66 99 99 99 99)
     #(24 26 56 99 99 99 99 99)
@@ -254,7 +227,7 @@
     #(99 99 99 99 99 99 99 99)
     #(99 99 99 99 99 99 99 99)))
 
-(defvar *q-luminance-hi*
+(defconstant +q-luminance-hi+
   #(#(10 7 6 10 15 25 32 38)
     #(8 8 9 12 16 36 38 34)
     #(9 8 10 15 25 36 43 35)
@@ -264,7 +237,7 @@
     #(31 40 49 54 64 76 75 63)
     #(45 58 59 61 70 62 64 62)))
 
-(defvar *q-chrominance-hi*
+(defconstant +q-chrominance-hi+
   #(#(11 11 15 29 62 62 62 62)
     #(11 13 16 41 62 62 62 62)
     #(15 16 35 62 62 62 62 62)
@@ -276,50 +249,47 @@
 
 )
 
-;;; Quantization performance test, each branch quantizes 3000 random matrixes
-;;; Note: if your system performs this test faster than get-internal-run-time quantum,
-;;; then it doesn't matters which to use
-(eval-when (:load-toplevel :compile-toplevel)
+;;; Quantization performance test, each branch quantizes 30000 random matrixes
+(eval-when (:compile-toplevel)
 
-(format t "Performing compile-time optimization.. please wait.~%")
-(finish-output)
+  (format t "Performing compile-time optimization.. please wait.~%")
+  (finish-output)
+  
+  (defvar *quantize-optimization*
+    (<= (let ((time1 (get-internal-run-time)))
+	  (loop for i fixnum from 1 to 30000 do
+		(loop for row across +q-luminance+ do
+		      (loop for q-coef fixnum across row
+			    maximize (round (random 128) q-coef))))
+	  (minus (get-internal-run-time) time1))
+	(let ((time1 (get-internal-run-time)))
+	  (loop for i fixnum from 1 to 30000 do
+		(loop for q-row across +q-luminance+ do
+		      (loop for val fixnum = (random 128)
+			    for absval fixnum = (abs val)
+			    for qc fixnum across q-row
+			    maximize
+			    (cond ((< absval (ash qc -1))
+				   0)
+				  ((<= absval qc)
+				   (if (minusp val)
+				       -1
+				     1))
+				  ((<= (ash absval -1) qc)
+				   (if (zerop (logand absval 1))
+				       (if (minusp val)
+					   -1
+					 1)
+				     (if (minusp val)
+					 -2
+				       2)))
+				  (t
+				   (round val qc))))))
+	  (minus (get-internal-run-time) time1))))
+  (format t "Done.~%")
+  (finish-output))
 
-(defvar *quantize-optimization*
-  (<= (let ((time1 (get-internal-run-time)))
-        (loop for i fixnum from 1 to 3000 do
-              (loop for row across *q-luminance* do
-                    (loop for q-coef fixnum across row
-                          maximize (round (random 128) q-coef))))
-        (minus (get-internal-run-time) time1))
-      (let ((time1 (get-internal-run-time)))
-        (loop for i fixnum from 1 to 3000 do
-              (loop for q-row across *q-luminance* do
-                    (loop for val fixnum = (random 128)
-                          for absval fixnum = (abs val)
-                          for qc fixnum across q-row
-                          maximize
-                          (cond ((< absval (ash qc -1))
-                                 0)
-                                ((<= absval qc)
-                                 (if (minusp val)
-                                     -1
-                                   1))
-                                ((<= (ash absval -1) qc)
-                                 (if (zerop (logand absval 1))
-                                     (if (minusp val)
-                                         -1
-                                       1)
-                                   (if (minusp val)
-                                       -2
-                                     2)))
-                                (t
-                                 (round val qc))))))
-                    (minus (get-internal-run-time) time1))))
-(format t "Done.~%")
-(finish-output)
-)
-
-(define-constant +q-tables+ (vector *q-luminance* *q-chrominance*))
+(define-constant +q-tables+ (vector +q-luminance+ +q-chrominance+))
 
 ;;; This table is used to map coefficients into SSSS value
 (define-constant +csize+ (make-array 2047
@@ -393,9 +363,6 @@
       (setf (svref *cr-g-tab* i) (mul +-0.71414+ x))
       (setf (svref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
 
-;;; Temporary workspace for IDCT
-(defvar *ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8))))
-
 ;;; Constants for LLM DCT
 (defconstant dct-shift  ; defining DCT scaling
   (if (<= (integer-length most-positive-fixnum) 31)
@@ -425,10 +392,6 @@
       (setf (svref *idct-limit-array* i) n))
 (loop for i from 384 to 511 do
       (setf (svref *idct-limit-array* i) 255))
-
-;;; State variables for write-bits
-(defvar *prev-byte* 0)
-(defvar *prev-length* 0)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Encoder part
@@ -733,8 +696,8 @@
 
 (defun write-bits (bi ni s)
   (declare #.*optimize*
-           (special *prev-length* *prev-byte*)
-           (type fixnum bi ni *prev-length* *prev-byte*)
+           ;(special *prev-length* *prev-byte*)
+           (type fixnum bi ni)
            (type stream s))
   (loop with lim fixnum = (if (> ni 8) 1 0)
         for i fixnum from lim downto 0 do
@@ -921,6 +884,9 @@
     (setq sampling '((1 1))))
   (let* ((wd (loop for entry in sampling maximize (first entry)))
          (ht (loop for entry in sampling maximize (second entry)))
+	 (*zz-result* (make-array 64 :element-type 'unsigned-byte))
+	 (*prev-byte* 0) ; State variables for write-bits
+	 (*prev-length* 0)
          (isampling (convert-sampling sampling wd ht))
          (height (ash ht 3))
          (width (ash wd 3))
@@ -945,6 +911,8 @@
                 (2 #(0 1))
                 (4 #(0 1 2 3))
                 (otherwise (error "Illegal number of components specified")))))
+    (declare (special *zz-result* *prev-byte* *prev-length*)
+	     (type fixnum *prev-length* *prev-byte*))
     (cond ((/= ncomp (length sampling))
            (error "Wrong sampling list for ~D component(s)" ncomp))
           ((> (length q-tabs) ncomp)
@@ -1502,6 +1470,7 @@
          (Vmax (loop for entry across fr maximize (second entry)))
          (x-growth (ash Hmax 3))
          (y-growth (ash Vmax 3))
+	 (*ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8)))) ; Temporary workspace for IDCT
          (freqs (make-array ncomp :initial-contents
                             (loop for i fixnum from 0 below ncomp ; collecting sampling frequencies
                                   for cid fixnum = (first (svref (scan-cdesc scan) i))
@@ -1512,6 +1481,7 @@
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
              (type (simple-vector *) freqs fr)
+	     (special *ws*)
              (dynamic-extent fr freqs))
     (catch 'marker
       (loop
@@ -1524,6 +1494,14 @@
                              collecting (vector (svref (descriptor-huff-ac image) ta)
                                                 (svref (descriptor-huff-dc image) td))))
         do (loop for comp fixnum from 0 below ncomp
+		 with zzbuf = #(#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0)
+				#(0  0  0  0  0  0  0  0))
                  for pos fixnum =
                     (position (first (svref (scan-cdesc scan) comp))
                               (descriptor-cid image)) ; an offset for byte positioning
@@ -1540,7 +1518,7 @@
                                    for x-pos fixnum from (mul (ash x 3) H) by (ash H 3)
                                    for decoded-block =
                                       (izigzag (decode-block (descriptor-zz image)
-                                                             (svref tables comp) nextbit s) +zzbuf+) do
+                                                             (svref tables comp) nextbit s) zzbuf) do
                                    ;; DC decoding and predictor update
                                       (incf (dbref decoded-block 0 0) (svref preds comp))
                                       (setf (svref preds comp) (dbref decoded-block 0 0))
@@ -1676,87 +1654,3 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
                    (descriptor-width image)))
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Here are some useful routines
-
-;;; Produces outfile (Windows 24-bit bitmap) from a JPEG infile
-(defun jpeg-to-bmp (&key infile outfile)
-  (with-open-file (o outfile :direction :output :element-type 'unsigned-byte)
-    (multiple-value-bind (rgb h w number-components)
-        (decode-image infile)
-      (let* ((compl (rem w 4))
-             (len (+ 54 (* h w 3) (mul compl h))))
-        ;; BITMAPFILEHEADER
-        (write-byte #x42 o) ; type
-        (write-byte #x4d o)
-        (write-byte (logand len 255) o) ; file size
-        (write-byte (logand (ash len -8) 255) o)
-        (write-byte (logand (ash len -16) 255) o)
-        (write-byte (logand (ash len -24) 255) o)
-        (write-byte 0 o) ; reserved
-        (write-byte 0 o)
-        (write-byte 0 o)
-        (write-byte 0 o)
-        (write-byte #x36 o) ; offset
-        (write-byte 0 o)
-        (write-byte 0 o)
-        (write-byte 0 o)
-        ;; BITMAPINFOHEADER
-        (write-byte 40 o) ; struct size
-        (write-byte 0 o)
-        (write-byte 0 o)
-        (write-byte 0 o)
-        (write-byte (logand w 255) o) ; width
-        (write-byte (logand (ash w -8) 255) o)
-        (write-byte (logand (ash w -16) 255) o)
-        (write-byte (logand (ash w -24) 255) o)
-        (write-byte (logand h 255) o) ; height
-        (write-byte (logand (ash h -8) 255) o)
-        (write-byte (logand (ash h -16) 255) o)
-        (write-byte (logand (ash h -24) 255) o)
-        (write-byte 1 o) ; planes, always one for BMP
-        (write-byte 0 o)
-        (write-byte 24 o) ; bitcount, 24-bit BMP
-        (write-byte 0 o)
-        ;; the rest of header
-        (write-sequence (make-array 24 :initial-element 0 :element-type 'unsigned-byte) o)
-        (ecase number-components
-          (1
-           (loop :for y :from (1- h) :downto 0 :do
-                 (loop :for x :from (1- w) :downto 0 :do
-                       (let ((grey (svref rgb (+ x (* y w)))))
-                         (write-byte grey o)
-                         (write-byte grey o)
-                         (write-byte grey o)))
-                 (dotimes (i compl)
-                   (write-byte 0 o))))
-          (3
-           (loop for y fixnum from (1- h) downto 0
-                 for ypos fixnum = (* y 3 w) do
-                 (loop for x fixnum from ypos to (plus ypos (* (1- w) 3)) by 3 do
-                       (write-byte (the unsigned-byte (svref rgb x)) o)
-                       (write-byte (the unsigned-byte (svref rgb (1+ x))) o)
-                       (write-byte (the unsigned-byte (svref rgb (plus 2 x))) o))
-                 (loop for i fixnum from 0 below compl do ; adjusting to double-word
-                       (write-byte 0 o)))))))))
-
-
-;;; Provides simple user interface for encoder: quality may vary 1 to 5 (decreasing)
-(defun encoding-wrapper (filename image ncomp h w &key (quality 4))
-  (case quality
-    ;; quite good
-    (1 (encode-image filename image ncomp h w
-                     :q-tabs (vector *q-luminance-hi* *q-chrominance-hi*) :sampling '((1 1)(1 1)(1 1))))
-    ;; quite good either
-    (2 (encode-image filename image ncomp h w
-                     :q-tabs (vector *q-luminance-hi* *q-chrominance-hi*) :sampling '((2 2)(1 1)(1 1))))
-    ;; satisfactory
-    (3 (encode-image filename image ncomp h w
-                     :q-tabs (vector *q-luminance* *q-chrominance*) :sampling '((1 1)(1 1)(1 1))))
-    ;; fair, but slightly worse
-    (4 (encode-image filename image ncomp h w
-                     :q-tabs (vector *q-luminance* *q-chrominance*) :sampling '((2 2)(1 1)(1 1))))
-    ;; poor, but tolerable in a case of blurry original, gives a sufficient compression
-    (5 (encode-image filename image ncomp h w
-                     :q-tabs (vector *q-luminance* *q-chrominance*) :sampling '((2 3)(1 1)(1 1))))
-    (otherwise (error "Illegal encoding quality number specified (valid 1 till 5)"))))
