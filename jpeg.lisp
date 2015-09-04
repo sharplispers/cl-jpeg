@@ -207,7 +207,7 @@
 (defconstant +M_APP0+ #xe0)
 
 ;;; Default quantization tables
-(defconstant +q-luminance+
+(define-constant +q-luminance+
   #(#(16 11 10 16 24 40 51 61)
     #(12 12 14 19 26 58 60 55)
     #(14 13 16 24 40 57 69 56)
@@ -217,7 +217,7 @@
     #(49 64 78 87 103 121 120 101)
     #(72 92 95 98 112 100 103 99)))
 
-(defconstant +q-chrominance+
+(define-constant +q-chrominance+
   #(#(17 18 24 47 99 99 99 99)
     #(18 21 26 66 99 99 99 99)
     #(24 26 56 99 99 99 99 99)
@@ -227,7 +227,7 @@
     #(99 99 99 99 99 99 99 99)
     #(99 99 99 99 99 99 99 99)))
 
-(defconstant +q-luminance-hi+
+(define-constant +q-luminance-hi+
   #(#(10 7 6 10 15 25 32 38)
     #(8 8 9 12 16 36 38 34)
     #(9 8 10 15 25 36 43 35)
@@ -237,7 +237,7 @@
     #(31 40 49 54 64 76 75 63)
     #(45 58 59 61 70 62 64 62)))
 
-(defconstant +q-chrominance-hi+
+(define-constant +q-chrominance-hi+
   #(#(11 11 15 29 62 62 62 62)
     #(11 13 16 41 62 62 62 62)
     #(15 16 35 62 62 62 62 62)
