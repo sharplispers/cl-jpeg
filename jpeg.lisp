@@ -75,7 +75,7 @@
                  izigzag write-bits))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defvar *optimize*  '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
+  (defvar *optimize*  '(optimize (safety 1) (space 0) (debug 0) (speed 3))))
 ;    '(optimize (safety 1) (space 3) (debug 0) (speed 0))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -441,7 +441,7 @@
         (yend (plus dy (1- height))))
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
-             (type (array uint8 *) inbuf outbuf))
+             (type (simple-array uint8 (*)) inbuf outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -465,7 +465,7 @@
     (declare #.*optimize*
              (type fixnum dx dy h w height width xend yend)
              (type (simple-vector *) YUV Y U V)
-             (type (array uint8 *) RGB))
+             (type (simple-array uint8 (*)) RGB))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -889,7 +889,7 @@
                             &key (q-tabs +q-tables+) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
   (declare #.*optimize*
            (type fixnum ncomp h w q-factor)
-           (type (array uint8 *) image))
+           (type (simple-array uint8 (*)) image))
   (when (= ncomp 1)
     (setq sampling '((1 1))))
   (let* ((wd (loop for entry in sampling maximize (first entry)))
@@ -1444,7 +1444,7 @@
          (nybase (mul ybase nwidth)))
     (declare #.*optimize*
              (type (simple-vector *) block)
-             (type (array uint8 *) buffer)
+             (type (simple-array uint8 (*)) buffer)
              (type fixnum x y H V ncomp xbase ybase nwidth nx dend nxbase nybase offset)
              (dynamic-extent ncomp xbase ybase nxbase nybase))
     (loop for row across block
@@ -1573,7 +1573,7 @@
   (let* ((buffer (descriptor-buffer image))
          (nw (mul (descriptor-width image) 3)))
     (declare #.*optimize*
-             (type (array uint8 *) buffer)
+             (type (simple-array uint8 (*)) buffer)
              (type fixnum nw))
     (loop for y fixnum from 0 below (descriptor-height image)
           for yp fixnum from 0 by nw do
