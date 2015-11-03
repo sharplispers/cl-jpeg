@@ -75,7 +75,7 @@
                  izigzag write-bits))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defvar *optimize*  '(optimize (safety 1) (space 0) (debug 0) (speed 3))))
+  (defparameter *optimize* '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
 ;;; For ease of reference
