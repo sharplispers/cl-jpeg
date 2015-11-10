@@ -75,13 +75,12 @@
                  izigzag write-bits))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defvar *optimize*  '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
-;    '(optimize (safety 1) (space 3) (debug 0) (speed 0))))
+  (defparameter *optimize* '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
 ;;; For ease of reference
 (defmacro dbref (data x y)
-  `(the fixnum (svref (svref ,data ,y) ,x)))
+  `(the fixnum (aref (aref ,data ,y) ,x)))
 
 ;;; Integer arithmetic wrappers
 (defmacro plus (a b)
@@ -108,7 +107,16 @@
   `(defconstant ,name (if (boundp ',name) (symbol-value ',name) ,value)
      ,@(when doc (list doc))))
 
+(deftype uint8 () '(unsigned-byte 8))
+
 (eval-when (:compile-toplevel :load-toplevel)
+
+(defun 2d-uint8-array (&rest contents)
+  (let ((nrow (length contents)))
+    (make-array nrow :initial-contents
+                (loop for row in contents
+                      collecting (make-array (length row) :element-type 'uint8
+                                             :initial-contents row)))))
 
 ;;; Source huffman tables for the encoder
 (define-constant +luminance-dc-bits+
@@ -181,14 +189,14 @@
 
 ;;;Zigzag encoding matrix
 (define-constant +zigzag-index+
-  #(#(0  1  5  6 14 15 27 28)
-    #(2  4  7 13 16 26 29 42)
-    #(3  8 12 17 25 30 41 43)
-    #(9 11 18 24 31 40 44 53)
-    #(10 19 23 32 39 45 52 54)
-    #(20 22 33 38 46 51 55 60)
-    #(21 34 37 47 50 56 59 61)
-    #(35 36 48 49 57 58 62 63)))
+  (2d-uint8-array '(0  1  5  6 14 15 27 28)
+                  '(2  4  7 13 16 26 29 42)
+                  '(3  8 12 17 25 30 41 43)
+                  '(9 11 18 24 31 40 44 53)
+                  '(10 19 23 32 39 45 52 54)
+                  '(20 22 33 38 46 51 55 60)
+                  '(21 34 37 47 50 56 59 61)
+                  '(35 36 48 49 57 58 62 63)))
 
 ;;;JPEG file markers
 (defconstant +M_COM+ #xfe)
@@ -208,44 +216,44 @@
 
 ;;; Default quantization tables
 (define-constant +q-luminance+
-  #(#(16 11 10 16 24 40 51 61)
-    #(12 12 14 19 26 58 60 55)
-    #(14 13 16 24 40 57 69 56)
-    #(14 17 22 29 51 87 80 62)
-    #(18 22 37 56 68 109 103 77)
-    #(24 35 55 64 81 104 113 92)
-    #(49 64 78 87 103 121 120 101)
-    #(72 92 95 98 112 100 103 99)))
+  (2d-uint8-array '(16 11 10 16 24 40 51 61)
+                  '(12 12 14 19 26 58 60 55)
+                  '(14 13 16 24 40 57 69 56)
+                  '(14 17 22 29 51 87 80 62)
+                  '(18 22 37 56 68 109 103 77)
+                  '(24 35 55 64 81 104 113 92)
+                  '(49 64 78 87 103 121 120 101)
+                  '(72 92 95 98 112 100 103 99)))
 
 (define-constant +q-chrominance+
-  #(#(17 18 24 47 99 99 99 99)
-    #(18 21 26 66 99 99 99 99)
-    #(24 26 56 99 99 99 99 99)
-    #(47 66 99 99 99 99 99 99)
-    #(99 99 99 99 99 99 99 99)
-    #(99 99 99 99 99 99 99 99)
-    #(99 99 99 99 99 99 99 99)
-    #(99 99 99 99 99 99 99 99)))
+  (2d-uint8-array '(17 18 24 47 99 99 99 99)
+                  '(18 21 26 66 99 99 99 99)
+                  '(24 26 56 99 99 99 99 99)
+                  '(47 66 99 99 99 99 99 99)
+                  '(99 99 99 99 99 99 99 99)
+                  '(99 99 99 99 99 99 99 99)
+                  '(99 99 99 99 99 99 99 99)
+                  '(99 99 99 99 99 99 99 99)))
 
 (define-constant +q-luminance-hi+
-  #(#(10 7 6 10 15 25 32 38)
-    #(8 8 9 12 16 36 38 34)
-    #(9 8 10 15 25 36 43 35)
-    #(9 11 14 18 32 54 50 39)
-    #(11 14 23 35 42 68 64 48)
-    #(15 22 34 40 51 65 71 58)
-    #(31 40 49 54 64 76 75 63)
-    #(45 58 59 61 70 62 64 62)))
+  (2d-uint8-array '(10 7 6 10 15 25 32 38)
+                  '(8 8 9 12 16 36 38 34)
+                  '(9 8 10 15 25 36 43 35)
+                  '(9 11 14 18 32 54 50 39)
+                  '(11 14 23 35 42 68 64 48)
+                  '(15 22 34 40 51 65 71 58)
+                  '(31 40 49 54 64 76 75 63)
+                  '(45 58 59 61 70 62 64 62)))
 
 (define-constant +q-chrominance-hi+
-  #(#(11 11 15 29 62 62 62 62)
-    #(11 13 16 41 62 62 62 62)
-    #(15 16 35 62 62 62 62 62)
-    #(29 41 62 62 62 62 62 62)
-    #(62 62 62 62 62 62 62 62)
-    #(62 62 62 62 62 62 62 62)
-    #(62 62 62 62 62 62 62 62)
-    #(62 62 62 62 62 62 62 62)))
+  (2d-uint8-array '(11 11 15 29 62 62 62 62)
+                  '(11 13 16 41 62 62 62 62)
+                  '(15 16 35 62 62 62 62 62)
+                  '(29 41 62 62 62 62 62 62)
+                  '(62 62 62 62 62 62 62 62)
+                  '(62 62 62 62 62 62 62 62)
+                  '(62 62 62 62 62 62 62 62)
+                  '(62 62 62 62 62 62 62 62)))
 
 )
 
@@ -386,12 +394,12 @@
 (defconstant +FIX-3-072711026+ (round (+ (* 3.072711026 (ash 1 dct-shift)) 0.5)))
 
 ;;; Post-IDCT limiting array
-(defvar *idct-limit-array* (make-array 512 :initial-element 0))
+(defvar *idct-limit-array* (make-array 512 :initial-element 0 :element-type 'uint8))
 (loop for n from 0
       for i from 128 to 383 do
-      (setf (svref *idct-limit-array* i) n))
+      (setf (aref *idct-limit-array* i) n))
 (loop for i from 384 to 511 do
-      (setf (svref *idct-limit-array* i) 255))
+      (setf (aref *idct-limit-array* i) 255))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Encoder part
@@ -432,7 +440,7 @@
         (yend (plus dy (1- height))))
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
-             (type (simple-vector *) inbuf outbuf))
+             (type (simple-array uint8 (*)) inbuf outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -442,8 +450,8 @@
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
                 (loop for i fixnum from 0 below ncomp do
-                      (setf (dbref (svref outbuf i) cx cy)
-                            (minus (svref inbuf (plus pos i)) 128)))))
+                      (setf (dbref (aref outbuf i) cx cy)
+                            (minus (aref inbuf (plus pos i)) 128)))))
     (values xend yend)))
 
 ;;; Direct color mapping
@@ -455,16 +463,17 @@
         (V (aref YUV 2)))
     (declare #.*optimize*
              (type fixnum dx dy h w height width xend yend)
-             (type (simple-vector *) RGB YUV Y U V))
+             (type (simple-vector *) YUV Y U V)
+             (type (simple-array uint8 (*)) RGB))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
           for ypos fixnum = (* w yd 3) do
           (loop for xd fixnum from dx to xend
                 for pos fixnum = (plus (mul xd 3) ypos)
-                for r fixnum = (svref rgb (plus pos 2))
-                for g fixnum = (svref rgb (1+ pos))
-                for b fixnum = (svref rgb pos)
+                for r fixnum = (aref rgb (plus pos 2))
+                for g fixnum = (aref rgb (1+ pos))
+                for b fixnum = (aref rgb pos)
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
                 (setf (dbref Y cx cy) (minus (ash (+ (svref *ctab* (plus r +r-y-off+))
@@ -500,14 +509,14 @@
              for q-row across q-table do
              (loop for x fixnum from 0 to 7
                    for val fixnum = (ash (svref block-row x) -3)
-                   for qc fixnum = (svref q-row x) do
+                   for qc fixnum = (aref q-row x) do
                    (setf (svref block-row x) (the fixnum (round val qc)))))
     '(loop for block-row across block
            for q-row across q-table do
            (loop for x fixnum from 0 to 7
                  for val fixnum = (ash (svref block-row x) -3)
                  for absval fixnum = (abs val)
-                 for qc fixnum = (svref q-row x) do
+                 for qc fixnum = (aref q-row x) do
                  (cond ((< absval (ash qc -1))
                         ;; you won't believe, but under LWW 4.1 such ugly hack gives
                         ;; very sufficient speedup
@@ -655,8 +664,8 @@
   (loop for row across buffer
         for z-row across +zigzag-index+ do
         (loop for x fixnum from 0 to 7 do
-              (setf (svref *zz-result* (svref z-row x))
-                    (the fixnum (svref row x)))))
+              (setf (aref *zz-result* (aref z-row x))
+                    (the fixnum (aref row x)))))
   *zz-result*)
 
 ;;; Writes frame header
@@ -879,7 +888,7 @@
                             &key (q-tabs +q-tables+) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
   (declare #.*optimize*
            (type fixnum ncomp h w q-factor)
-           (type (simple-vector *) image))
+           (type (simple-array uint8 (*)) image))
   (when (= ncomp 1)
     (setq sampling '((1 1))))
   (let* ((wd (loop for entry in sampling maximize (first entry)))
@@ -927,7 +936,7 @@
                                  (loop for k fixnum from 0 below (length q-tabs)
                                     collecting (make-array 8 :initial-contents
                                                            (loop for i fixnum from 0 to 7
-                                                              collecting (make-array 8)))))))
+                                                              collecting (make-array 8 :element-type 'uint8)))))))
         (loop for entry across q-tabs
            for entry2 across q-tabs2 do
            (loop for x fixnum from 0 to 7 do
@@ -1291,7 +1300,7 @@
 
 ;;;Macro that bounds value in IDCT
 (defmacro dct-limit (n)
-  `(svref *idct-limit-array* (logand (plus ,n 255) 511)))
+  `(aref *idct-limit-array* (logand (plus ,n 255) 511)))
 
 ;;; Inverse LLM DCT and dequantization
 (defun inverse-llm-dct (block q-table)
@@ -1433,7 +1442,8 @@
          (nxbase (mul xbase ncomp))
          (nybase (mul ybase nwidth)))
     (declare #.*optimize*
-             (type (simple-vector *) block buffer)
+             (type (simple-vector *) block)
+             (type (simple-array uint8 (*)) buffer)
              (type fixnum x y H V ncomp xbase ybase nwidth nx dend nxbase nybase offset)
              (dynamic-extent ncomp xbase ybase nxbase nybase))
     (loop for row across block
@@ -1443,13 +1453,13 @@
                 for x fixnum from xbase below (descriptor-width image) by H
                 for pos fixnum from (+ ypos offset nxbase) by nx do
                 (if (= 1 H V)
-                    (setf (svref buffer pos) (the fixnum val))
+                    (setf (aref buffer pos) (the uint8 val))
                   (loop for dy fixnum from 0 below V
                         for dypos fixnum from pos below dend by nwidth
                         for dxend from (mul (plus (1+ y) dy) nwidth) by nwidth do
                         (loop for dx fixnum from 0 below H
                               for dpos fixnum from dypos below dxend by 3 do
-                              (setf (svref buffer dpos) (the fixnum val)))))))))
+                              (setf (aref buffer dpos) (the uint8 val)))))))))
 
 ;;; Reads and decodes either whole scan or restart interval
 (defun decode-chunk (image scan s)
@@ -1562,7 +1572,7 @@
   (let* ((buffer (descriptor-buffer image))
          (nw (mul (descriptor-width image) 3)))
     (declare #.*optimize*
-             (type (simple-vector *) buffer)
+             (type (simple-array uint8 (*)) buffer)
              (type fixnum nw))
     (loop for y fixnum from 0 below (descriptor-height image)
           for yp fixnum from 0 by nw do
@@ -1570,18 +1580,18 @@
                 for py fixnum from yp by 3
                 for pu fixnum = (1+ py)
                 for pv fixnum = (plus py 2)
-                for yy fixnum = (svref buffer py)
-                for cb fixnum = (svref buffer pu)
-                for cr fixnum = (svref buffer pv) do
-                (setf (svref buffer py) ; BLUE
-                      (the fixnum (limit (plus yy (svref *cb-b-tab* cb)))))
-                (setf (svref buffer pu) ; GREEN
-                      (the fixnum (limit (plus yy (ash (plus
-                                                        (svref *cb-g-tab* cb)
-                                                        (svref *cr-g-tab* cr))
-                                                       (- shift))))))
-                (setf (svref buffer pv) ; RED
-                      (the fixnum (limit (plus yy (svref *cr-r-tab* cr)))))))))
+                for yy fixnum = (aref buffer py)
+                for cb fixnum = (aref buffer pu)
+                for cr fixnum = (aref buffer pv) do
+                (setf (aref buffer py) ; BLUE
+                      (the uint8 (limit (plus yy (svref *cb-b-tab* cb)))))
+                (setf (aref buffer pu) ; GREEN
+                      (the uint8 (limit (plus yy (ash (plus
+						       (svref *cb-g-tab* cb)
+						       (svref *cr-g-tab* cr))
+						      (- shift))))))
+                (setf (aref buffer pv) ; RED
+                      (the uint8 (limit (plus yy (svref *cr-r-tab* cr)))))))))
 
 (defun decode-frame-beginning (image s)
   (read-byte s) ; length
@@ -1591,6 +1601,7 @@
         (make-array (* (setf (descriptor-height image) (read-word s)) ; height
                        (setf (descriptor-width image) (read-word s))  ; width
                        (setf (descriptor-ncomp image) (read-byte s))) ; number of components
+                    :element-type 'uint8
                     :initial-element 0)))
 
 ;;; Frame decoding subroutine
