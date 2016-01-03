@@ -1,7 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; Version 1.5, November 2015
-;;; Copyright [c] 1999,2015, Eugene Zaikonnikov <eugene@funcall.org>
+;;; Copyright [c] 1999,2015,2016 Eugene Zaikonnikov <eugene@funcall.org>
 ;;;               
 ;;; This software is distributed under the terms of BSD-like license
 ;;; [see LICENSE for details]
