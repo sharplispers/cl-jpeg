@@ -1,9 +1,6 @@
 ;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
 ;;; Generic Common Lisp JPEG encoder/decoder implementation
-;;; $Id: jpeg.lisp,v 1.6 2011-03-14 22:49:00 charmon Exp $
-;;; Version 1.3, August 2015
-;;; Written by Eugene Zaikonnikov [eugene@funcall.org]
-;;; Copyright [c] 1999,2015, Eugene Zaikonnikov <eugene@funcall.org>
+;;; Copyright [c] 1999,2015,2016 Eugene Zaikonnikov <eugene@funcall.org>
 ;;;               
 ;;; This software is distributed under the terms of BSD-like license
 ;;; [see LICENSE for details]
@@ -69,18 +66,37 @@
 
 (in-package #:jpeg)
 
-(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
+#+nil(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
+
+(deftype uint8 () '(unsigned-byte 8))
+
+(deftype uint8-array () '(simple-array uint8 (*)))
+(deftype uint8-2d-array () '(simple-array uint8-array (*)))
+
+(deftype sint16 () '(signed-byte 16))
+
+(deftype sint16-array () '(simple-array sint16 (*)))
+(deftype sint16-2d-array () '(simple-array sint16-array (*)))
+
+(deftype fixnum-array () '(simple-array fixnum (*)))
+(deftype fixnum-2d-array () '(simple-array fixnum-array (*)))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *optimize* '(optimize (safety 0) (space 0) (debug 0) (speed 3))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
 ;;; For ease of reference
-(defmacro dbref (data x y)
-  `(the fixnum (aref (aref ,data ,y) ,x)))
+(defmacro u8ref (data x y)
+  `(the uint8 (aref (the uint8-array (aref (the uint8-2d-array ,data) ,y)) ,x)))
+
+(defmacro s16ref (data x y)
+  `(the sint16 (aref (the sint16-array (aref (the sint16-2d-array ,data) ,y)) ,x)))
+
+(defmacro fixref (data x y)
+  `(the fixnum (aref (the fixnum-array (aref (the fixnum-2d-array ,data) ,y)) ,x)))
 
 ;;; Integer arithmetic wrappers
 (defmacro plus (a b)
@@ -107,38 +123,54 @@
   `(defconstant ,name (if (boundp ',name) (symbol-value ',name) ,value)
      ,@(when doc (list doc))))
 
-(deftype uint8 () '(unsigned-byte 8))
-
 (eval-when (:compile-toplevel :load-toplevel)
 
+(defun uint8-array (&rest contents)
+  (the uint8-array (make-array (length contents) :element-type 'uint8
+			       :initial-contents contents)))
+  
 (defun 2d-uint8-array (&rest contents)
   (let ((nrow (length contents)))
-    (make-array nrow :initial-contents
+    (the uint8-2d-array
+	 (make-array nrow
+		:element-type 'uint8-array
+		:initial-contents
                 (loop for row in contents
                       collecting (make-array (length row) :element-type 'uint8
-                                             :initial-contents row)))))
+                                             :initial-contents row))))))
+
+(defun 2d-sint16-array (&rest contents)
+  (let ((nrow (length contents)))
+    (the sint16-2d-array
+	 (make-array nrow
+		:element-type 'sint16-array
+		:initial-contents
+                (loop for row in contents
+                      collecting (make-array (length row) :element-type 'sint16
+                                             :initial-contents row))))))
 
 ;;; Source huffman tables for the encoder
 (define-constant +luminance-dc-bits+
-  #(#x00 #x01 #x05 #x01 #x01 #x01 #x01 #x01
-     #x01 #x00 #x00 #x00 #x00 #x00 #x00 #x00))
+    (uint8-array #x00 #x01 #x05 #x01 #x01 #x01 #x01 #x01
+		 #x01 #x00 #x00 #x00 #x00 #x00 #x00 #x00))
 
 (define-constant +luminance-dc-values+
-  #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
+    (uint8-array #x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
 (define-constant +chrominance-dc-bits+
-  #(#x00 #x03 #x01 #x01 #x01 #x01 #x01 #x01
-     #x01 #x01 #x01 #x00 #x00 #x00 #x00 #x00))
+    (uint8-array #x00 #x03 #x01 #x01 #x01 #x01 #x01 #x01
+		 #x01 #x01 #x01 #x00 #x00 #x00 #x00 #x00))
 
 (define-constant +chrominance-dc-values+
-  #(#x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
+    (uint8-array #x00 #x01 #x02 #x03 #x04 #x05 #x06 #x07 #x08 #x09 #x0a #x0b))
 
 (define-constant +luminance-ac-bits+
-  #(#x00 #x02 #x01 #x03 #x03 #x02 #x04 #x03
-     #x05 #x05 #x04 #x04 #x00 #x00 #x01 #x7d))
+    (uint8-array #x00 #x02 #x01 #x03 #x03 #x02 #x04 #x03
+		 #x05 #x05 #x04 #x04 #x00 #x00 #x01 #x7d))
 
 (define-constant +luminance-ac-values+
-  #(#x01 #x02 #x03 #x00 #x04 #x11 #x05 #x12
+    (uint8-array
+     #x01 #x02 #x03 #x00 #x04 #x11 #x05 #x12
      #x21 #x31 #x41 #x06 #x13 #x51 #x61 #x07
      #x22 #x71 #x14 #x32 #x81 #x91 #xa1 #x08
      #x23 #x42 #xb1 #xc1 #x15 #x52 #xd1 #xf0
@@ -161,11 +193,12 @@
      #xf9 #xfa))
 
 (define-constant +chrominance-ac-bits+
-  #(#x00 #x02 #x01 #x02 #x04 #x04 #x03 #x04
-     #x07 #x05 #x04 #x04 #x00 #x01 #x02 #x77))
+    (uint8-array #x00 #x02 #x01 #x02 #x04 #x04 #x03 #x04
+		#x07 #x05 #x04 #x04 #x00 #x01 #x02 #x77))
 
 (define-constant +chrominance-ac-values+
-  #(#x00 #x01 #x02 #x03 #x11 #x04 #x05 #x21
+    (uint8-array
+     #x00 #x01 #x02 #x03 #x11 #x04 #x05 #x21
      #x31 #x06 #x12 #x41 #x51 #x07 #x61 #x71
      #x13 #x22 #x32 #x81 #x08 #x14 #x42 #x91
      #xa1 #xb1 #xc1 #x09 #x23 #x33 #x52 #xf0
@@ -327,28 +360,30 @@
 (defconstant +g-v-off+ (* 6 256))
 (defconstant +b-v-off+ (* 7 256))
 
+(declaim (type fixnum-array *ctab* *cr-r-tab* *cb-g-tab* *cr-g-tab* *cb-b-tab*))
+
 ;;;Direct color conversion table
-(defvar *ctab* (make-array 2048 :initial-element 0))
+(defparameter *ctab* (make-array 2048 :element-type 'fixnum :initial-element 0))
 
 ;;; Filling in the table
 (loop for i fixnum from 0 to 255 do
-      (setf (svref *ctab* (plus i +r-y-off+))
+      (setf (aref *ctab* (plus i +r-y-off+))
             (mul +.299+ i))
-      (setf (svref *ctab* (plus i +g-y-off+))
+      (setf (aref *ctab* (plus i +g-y-off+))
             (mul +.587+ i))
-      (setf (svref *ctab* (plus i +b-y-off+))
+      (setf (aref *ctab* (plus i +b-y-off+))
             (mul +.114+ i))
-      (setf (svref *ctab* (plus i +r-u-off+))
+      (setf (aref *ctab* (plus i +r-u-off+))
             (mul +-.1687+ i))
-      (setf (svref *ctab* (plus i +g-u-off+))
+      (setf (aref *ctab* (plus i +g-u-off+))
             (mul +-.3313+ i))
-      (setf (svref *ctab* (plus i +b-u-off+))
+      (setf (aref *ctab* (plus i +b-u-off+))
             (+ (mul +.5+ i) +uvoffset+ +one-half+))
-      (setf (svref *ctab* (plus i +r-v-off+))
+      (setf (aref *ctab* (plus i +r-v-off+))
             (+ (mul +.5+ i) +uvoffset+ +one-half+))
-      (setf (svref *ctab* (plus i +g-v-off+))
+      (setf (aref *ctab* (plus i +g-v-off+))
             (mul +-.4187+ i))
-      (setf (svref *ctab* (plus i +b-v-off+))
+      (setf (aref *ctab* (plus i +b-v-off+))
             (mul +-.0813+ i)))
 
 ;;; Constantsants for the inverse colorspace conversion
@@ -358,18 +393,18 @@
 (defconstant +-0.34414+ (round (+ (* -0.34414 (ash 1 shift)) 0.5)))
 
 ;;; Inverse color conversion tables
-(defvar *cr-r-tab* (make-array 256))
-(defvar *cb-g-tab* (make-array 256))
-(defvar *cr-g-tab* (make-array 256))
-(defvar *cb-b-tab* (make-array 256))
+(defparameter *cr-r-tab* (make-array 256 :element-type 'fixnum))
+(defparameter *cb-g-tab* (make-array 256 :element-type 'fixnum))
+(defparameter *cr-g-tab* (make-array 256 :element-type 'fixnum))
+(defparameter *cb-b-tab* (make-array 256 :element-type 'fixnum))
 
 ;;; Filling up the tables
 (loop for i from 0 to 255
       for x from -127 do
-      (setf (svref *cr-r-tab* i) (ash (plus (mul +1.40200+ x) +one-half+) (- shift)))
-      (setf (svref *cb-b-tab* i) (ash (plus (mul +1.77200+ x) +one-half+) (- shift)))
-      (setf (svref *cr-g-tab* i) (mul +-0.71414+ x))
-      (setf (svref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
+      (setf (aref *cr-r-tab* i) (ash (plus (mul +1.40200+ x) +one-half+) (- shift)))
+      (setf (aref *cb-b-tab* i) (ash (plus (mul +1.77200+ x) +one-half+) (- shift)))
+      (setf (aref *cr-g-tab* i) (mul +-0.71414+ x))
+      (setf (aref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
 
 ;;; Constants for LLM DCT
 (defconstant dct-shift  ; defining DCT scaling
@@ -393,6 +428,7 @@
 (defconstant +FIX-2-562915447+ (round (+ (* 2.562915447 (ash 1 dct-shift)) 0.5)))
 (defconstant +FIX-3-072711026+ (round (+ (* 3.072711026 (ash 1 dct-shift)) 0.5)))
 
+(declaim (type uint8-array *idct-limit-array*))
 ;;; Post-IDCT limiting array
 (defvar *idct-limit-array* (make-array 512 :initial-element 0 :element-type 'uint8))
 (loop for n from 0
@@ -408,23 +444,24 @@
 (defun subsample (inbuf outbuf H V xlim ylim iH iV)
   (declare #.*optimize*
            (type fixnum H V xlim ylim iV iH)
-           (type (simple-vector *) inbuf outbuf))
+           (type sint16-2d-array inbuf)
+	   (type (simple-array sint16-2d-array (*)) outbuf))
   (loop for by fixnum from 0 below V do
         (loop for bx fixnum from 0 below H
-              for block = (svref outbuf (plus bx (mul by H))) do
-              (loop for y fixnum from (ash by 3) by iV
+              for block = (aref outbuf (plus bx (mul by H))) do
+              (loop for y fixnum from (the fixnum (ash by 3)) by iV
                     for yp fixnum from 0 to 7 do
-                    (loop for x fixnum from (ash bx 3) by iH
+                    (loop for x fixnum from (the fixnum (ash bx 3)) by iH
                           for xp fixnum from 0 to 7 do
-                          (setf (dbref block xp yp)
-                                (the fixnum (cond ((and (<= x xlim) (<= y ylim))
-                                                   (dbref inbuf x y))
+                          (setf (s16ref block xp yp)
+                                (the sint16 (cond ((and (<= x xlim) (<= y ylim))
+                                                   (s16ref inbuf x y))
                                                   ((and (> x xlim) (> y ylim))
-                                                   (dbref inbuf xlim ylim))
+                                                   (s16ref inbuf xlim ylim))
                                                   ((> x xlim)
-                                                   (dbref inbuf xlim y))
+                                                   (s16ref inbuf xlim y))
                                                   ((> y ylim)
-                                                   (dbref inbuf x ylim))
+                                                   (s16ref inbuf x ylim))
                                                   (t
                                                    (error "Internal error"))
                                                    ))))))))
@@ -440,7 +477,8 @@
         (yend (plus dy (1- height))))
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
-             (type (simple-array uint8 (*)) inbuf outbuf))
+	     (type uint8-array inbuf)
+	     (type (simple-array uint8-2d-array (*)) outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -450,7 +488,7 @@
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
                 (loop for i fixnum from 0 below ncomp do
-                      (setf (dbref (aref outbuf i) cx cy)
+                      (setf (u8ref (aref outbuf i) cx cy)
                             (minus (aref inbuf (plus pos i)) 128)))))
     (values xend yend)))
 
@@ -463,12 +501,13 @@
         (V (aref YUV 2)))
     (declare #.*optimize*
              (type fixnum dx dy h w height width xend yend)
-             (type (simple-vector *) YUV Y U V)
-             (type (simple-array uint8 (*)) RGB))
+	     (type sint16-2d-array Y U V)
+	     (type fixnum-array *ctab*)
+             (type uint8-array RGB))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
-          for ypos fixnum = (* w yd 3) do
+          for ypos fixnum = (mul3 w yd 3) do
           (loop for xd fixnum from dx to xend
                 for pos fixnum = (plus (mul xd 3) ypos)
                 for r fixnum = (aref rgb (plus pos 2))
@@ -476,20 +515,20 @@
                 for b fixnum = (aref rgb pos)
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
-                (setf (dbref Y cx cy) (minus (ash (+ (svref *ctab* (plus r +r-y-off+))
-                                                          (svref *ctab* (plus g +g-y-off+))
-                                                          (svref *ctab* (plus b +b-y-off+)))
-                                                       (- shift))
+	       (setf (s16ref Y cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-y-off+))
+								 (aref *ctab* (plus g +g-y-off+))
+								 (aref *ctab* (plus b +b-y-off+))))
+						  (- shift))
                                              128))
-                (setf (dbref U cx cy) (minus (ash (+ (svref *ctab* (plus r +r-u-off+))
-                                                          (svref *ctab* (plus g +g-u-off+))
-                                                          (svref *ctab* (plus b +b-u-off+)))
-                                                       (- shift))
+                (setf (s16ref U cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-u-off+))
+								  (aref *ctab* (plus g +g-u-off+))
+								  (aref *ctab* (plus b +b-u-off+))))
+						   (- shift))
                                              128))
-                (setf (dbref V cx cy) (minus (ash (+ (svref *ctab* (plus r +r-v-off+))
-                                                          (svref *ctab* (plus g +g-v-off+))
-                                                          (svref *ctab* (plus b +b-v-off+)))
-                                                       (- shift))
+	       (setf (s16ref V cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-v-off+))
+								 (aref *ctab* (plus g +g-v-off+))
+								 (aref *ctab* (plus b +b-v-off+))))
+						  (- shift))
                                              128))))
     (values xend yend)))
 
@@ -508,36 +547,38 @@
       '(loop for block-row across block
              for q-row across q-table do
              (loop for x fixnum from 0 to 7
-                   for val fixnum = (ash (svref block-row x) -3)
+                   for val fixnum = (ash (aref block-row x) -3)
                    for qc fixnum = (aref q-row x) do
-                   (setf (svref block-row x) (the fixnum (round val qc)))))
+                   (setf (aref block-row x) (the fixnum (round val qc)))))
     '(loop for block-row across block
            for q-row across q-table do
            (loop for x fixnum from 0 to 7
-                 for val fixnum = (ash (svref block-row x) -3)
+                 for val fixnum = (ash (aref block-row x) -3)
                  for absval fixnum = (abs val)
                  for qc fixnum = (aref q-row x) do
                  (cond ((< absval (ash qc -1))
                         ;; you won't believe, but under LWW 4.1 such ugly hack gives
                         ;; very sufficient speedup
-                        (setf (svref block-row x) 0))
+                        (setf (aref block-row x) 0))
                        ((<= absval qc)
                         (if (minusp val)
-                            (setf (svref block-row x) -1)
-                         (setf (svref block-row x) 1)))
+                            (setf (aref block-row x) -1)
+                         (setf (aref block-row x) 1)))
                        ((<= (ash absval -1) qc)
                         (if (zerop (logand absval 1))
                             (if (minusp val)
-                                (setf (svref block-row x) -1)
-                              (setf (svref block-row x) 1))
+                                (setf (aref block-row x) -1)
+                              (setf (aref block-row x) 1))
                           (if (minusp val)
-                              (setf (svref block-row x) -2)
-                            (setf (svref block-row x) 2))))
+                              (setf (aref block-row x) -2)
+                            (setf (aref block-row x) 2))))
                        (t
-                        (setf (svref block-row x) (the fixnum (round val qc)))))))))
+                        (setf (aref block-row x) (the fixnum (round val qc)))))))))
 
 (defun quantize (block q-table)
-  (declare #.*optimize* (type (simple-vector *) block q-table))
+  (declare #.*optimize*
+	   (type sint16-2d-array block)
+	   (type uint8-2d-array q-table))
   (quantize-block))
 
 ;;; LLM DCT aux definitions
@@ -548,35 +589,36 @@
 (defmacro plus3 (x y z)
   `(plus (plus ,x ,y) ,z))
 
+(defmacro mul3 (x y z)
+  `(mul (mul ,x ,y) ,z))
+
 ;;; Implementation of Loeffer, Ligtenberg and Moschytz forward DCT
 (defun llm-dct (data)
-  (declare #.*optimize* (type (simple-vector *) data))
+  (declare #.*optimize* (type sint16-2d-array data))
   (loop with tmp0 fixnum and tmp1 fixnum and tmp2 fixnum
         and tmp3 fixnum and tmp4 fixnum and tmp5 fixnum
         and tmp6 fixnum and tmp7 fixnum and tmp10 fixnum
         and tmp11 fixnum and tmp12 fixnum and tmp13 fixnum
         and z1 fixnum and z2 fixnum and z3 fixnum
         and z4 fixnum and z5 fixnum do
-        (loop ; for dptrpos fixnum from 7 downto 0
-              ; for dptr = (svref data dptrpos) do
-              for dptr across data do   ; iterating over rows
-              (setf tmp0 (plus (svref dptr 0) (svref dptr 7)))
-              (setf tmp7 (minus (svref dptr 0) (svref dptr 7)))
-              (setf tmp1 (plus (svref dptr 1) (svref dptr 6)))
-              (setf tmp6 (minus (svref dptr 1) (svref dptr 6)))
-              (setf tmp2 (plus (svref dptr 2) (svref dptr 5)))
-              (setf tmp5 (minus (svref dptr 2) (svref dptr 5)))
-              (setf tmp3 (plus (svref dptr 3) (svref dptr 4)))
-              (setf tmp4 (minus (svref dptr 3) (svref dptr 4)))
+        (loop for dptr across data do   ; iterating over rows
+              (setf tmp0 (plus (aref dptr 0) (aref dptr 7)))
+              (setf tmp7 (minus (aref dptr 0) (aref dptr 7)))
+              (setf tmp1 (plus (aref dptr 1) (aref dptr 6)))
+              (setf tmp6 (minus (aref dptr 1) (aref dptr 6)))
+              (setf tmp2 (plus (aref dptr 2) (aref dptr 5)))
+              (setf tmp5 (minus (aref dptr 2) (aref dptr 5)))
+              (setf tmp3 (plus (aref dptr 3) (aref dptr 4)))
+              (setf tmp4 (minus (aref dptr 3) (aref dptr 4)))
               (setf tmp10 (plus tmp0 tmp3))
               (setf tmp13 (minus tmp0 tmp3))
               (setf tmp11 (plus tmp1 tmp2))
               (setf tmp12 (minus tmp1 tmp2))
-              (setf (svref dptr 0) (ash (plus tmp10 tmp11) 1))
-              (setf (svref dptr 4) (ash (minus tmp10 tmp11) 1))
+              (setf (aref dptr 0) (ash (plus tmp10 tmp11) 1))
+              (setf (aref dptr 4) (ash (minus tmp10 tmp11) 1))
               (setf z1 (mul (plus tmp12 tmp13) +FIX-0-541196100+))
-              (setf (svref dptr 2) (descale (plus z1 (mul tmp13 +FIX-0-765366865+)) +shift-1+))
-              (setf (svref dptr 6) (descale (plus z1 (mul tmp12 (- +FIX-1-847759065+))) +shift-1+))
+              (setf (aref dptr 2) (descale (plus z1 (mul tmp13 +FIX-0-765366865+)) +shift-1+))
+              (setf (aref dptr 6) (descale (plus z1 (mul tmp12 (- +FIX-1-847759065+))) +shift-1+))
               (setf z1 (plus tmp4 tmp7))
               (setf z2 (plus tmp5 tmp6))
               (setf z3 (plus tmp4 tmp6))
@@ -592,28 +634,28 @@
               (setf z4 (mul z4 (- +fix-0-390180644+)))
               (incf z3 z5)
               (incf z4 z5)
-              (setf (svref dptr 7) (descale (plus3 tmp4 z1 z3) +shift-1+))
-              (setf (svref dptr 5) (descale (plus3 tmp5 z2 z4) +shift-1+))
-              (setf (svref dptr 3) (descale (plus3 tmp6 z2 z3) +shift-1+))
-              (setf (svref dptr 1) (descale (plus3 tmp7 z1 z4) +shift-1+)))
+              (setf (aref dptr 7) (descale (plus3 tmp4 z1 z3) +shift-1+))
+              (setf (aref dptr 5) (descale (plus3 tmp5 z2 z4) +shift-1+))
+              (setf (aref dptr 3) (descale (plus3 tmp6 z2 z3) +shift-1+))
+              (setf (aref dptr 1) (descale (plus3 tmp7 z1 z4) +shift-1+)))
         (loop for cnt fixnum from 7 downto 0 do ; second pass: on columns
-              (setf tmp0 (plus (dbref data cnt 0) (dbref data cnt 7)))
-              (setf tmp7 (minus (dbref data cnt 0) (dbref data cnt 7)))
-              (setf tmp1 (plus (dbref data cnt 1) (dbref data cnt 6)))
-              (setf tmp6 (minus (dbref data cnt 1) (dbref data cnt 6)))
-              (setf tmp2 (plus (dbref data cnt 2) (dbref data cnt 5)))
-              (setf tmp5 (minus (dbref data cnt 2) (dbref data cnt 5)))
-              (setf tmp3 (plus (dbref data cnt 3) (dbref data cnt 4)))
-              (setf tmp4 (minus (dbref data cnt 3) (dbref data cnt 4)))
+              (setf tmp0 (plus (s16ref data cnt 0) (s16ref data cnt 7)))
+              (setf tmp7 (minus (s16ref data cnt 0) (s16ref data cnt 7)))
+              (setf tmp1 (plus (s16ref data cnt 1) (s16ref data cnt 6)))
+              (setf tmp6 (minus (s16ref data cnt 1) (s16ref data cnt 6)))
+              (setf tmp2 (plus (s16ref data cnt 2) (s16ref data cnt 5)))
+              (setf tmp5 (minus (s16ref data cnt 2) (s16ref data cnt 5)))
+              (setf tmp3 (plus (s16ref data cnt 3) (s16ref data cnt 4)))
+              (setf tmp4 (minus (s16ref data cnt 3) (s16ref data cnt 4)))
               (setf tmp10 (plus tmp0 tmp3))
               (setf tmp13 (minus tmp0 tmp3))
               (setf tmp11 (plus tmp1 tmp2))
               (setf tmp12 (minus tmp1 tmp2))
-              (setf (dbref data cnt 0) (descale (plus tmp10 tmp11) 1))
-              (setf (dbref data cnt 4) (descale (minus tmp10 tmp11) 1))
+              (setf (s16ref data cnt 0) (descale (plus tmp10 tmp11) 1))
+              (setf (s16ref data cnt 4) (descale (minus tmp10 tmp11) 1))
               (setf z1 (mul (plus tmp12 tmp13) +fix-0-541196100+))
-              (setf (dbref data cnt 2) (descale (plus z1 (mul tmp13 +fix-0-765366865+)) +shift+1+))
-              (setf (dbref data cnt 6) (descale (plus z1 (mul tmp12 (- +fix-1-847759065+))) +shift+1+))
+              (setf (s16ref data cnt 2) (descale (plus z1 (mul tmp13 +fix-0-765366865+)) +shift+1+))
+              (setf (s16ref data cnt 6) (descale (plus z1 (mul tmp12 (- +fix-1-847759065+))) +shift+1+))
               (setf z1 (plus tmp4 tmp7))
               (setf z2 (plus tmp5 tmp6))
               (setf z3 (plus tmp4 tmp6))
@@ -629,48 +671,67 @@
               (setf z4 (mul z4 (- +fix-0-390180644+)))
               (incf z3 z5)
               (incf z4 z5)
-              (setf (dbref data cnt 7) (descale (plus3 tmp4 z1 z3) +shift+1+))
-              (setf (dbref data cnt 5) (descale (plus3 tmp5 z2 z4) +shift+1+))
-              (setf (dbref data cnt 3) (descale (plus3 tmp6 z2 z3) +shift+1+))
-              (setf (dbref data cnt 1) (descale (plus3 tmp7 z1 z4) +shift+1+)))
+              (setf (s16ref data cnt 7) (descale (plus3 tmp4 z1 z3) +shift+1+))
+              (setf (s16ref data cnt 5) (descale (plus3 tmp5 z2 z4) +shift+1+))
+              (setf (s16ref data cnt 3) (descale (plus3 tmp6 z2 z3) +shift+1+))
+              (setf (s16ref data cnt 1) (descale (plus3 tmp7 z1 z4) +shift+1+)))
         (return)))
 
 ;;; Forward DCT and quantization
 (defun crunch (buf pos table)
   (declare #.*optimize*
            (type fixnum pos)
-           (type (simple-vector *) buf))
-  (llm-dct (svref buf pos))
-  (quantize (svref buf pos) table))
+           (type (simple-array sint16-2d-array (*)) buf))
+  (llm-dct (aref buf pos))
+  (quantize (aref buf pos) table))
 
 ;;; Q-tables scaling
 (defun q-scale (table q-factor)
-  (declare #.*optimize*)
+  (declare #.*optimize*
+	   (type uint8-2d-array table)
+	   (type uint8 q-factor))
   (when (/= q-factor 64)
-    (let ((factor (/ q-factor 64)))
-      (loop for q-row across table do
+    (let ((factor (the uint8 (/ q-factor 64))))
+      (loop for q-row of-type uint8-array across table do
             (loop for x fixnum from 0 to 7 do
-                  (setf (svref q-row x)
-                        (the fixnum (round (* (svref q-row x) factor)))))))))
+                  (setf (aref q-row x)
+                        (the fixnum (round (* (aref q-row x) factor)))))))))
 
 ;;; Function that maps value into SSSS
 (defun csize (n)
     (declare #.*optimize* (type fixnum n))
-    (svref +csize+ (plus n 1023)))
+    (aref +csize+ (plus n 1023)))
 
 ;;; zigzag ordering
 (defun zigzag (buffer)
-  (declare #.*optimize* (type (simple-vector 8) buffer))
-  (loop for row across buffer
-        for z-row across +zigzag-index+ do
-        (loop for x fixnum from 0 to 7 do
-              (setf (aref *zz-result* (aref z-row x))
-                    (the fixnum (aref row x)))))
+  (declare #.*optimize*
+	   (type sint16-2d-array buffer)
+	   (type sint16-array *zz-result*))
+  (loop for row of-type sint16-array across buffer
+     for z-row of-type uint8-array across +zigzag-index+ do
+       (loop for x fixnum from 0 to 7 do
+	    (setf (aref *zz-result* (aref z-row x))
+		  (the sint16 (aref row x)))))
   *zz-result*)
+
+(defun zigzag8 (buffer)
+  (let ((zz-result (make-array 64 :element-type 'uint8)))
+    (declare #.*optimize*
+	     (type uint8-2d-array buffer)
+	     (type uint8-array zz-result))
+    (loop for row of-type uint8-array across buffer
+       for z-row of-type uint8-array across +zigzag-index+ do
+	 (loop for x fixnum from 0 to 7 do
+	      (setf (aref zz-result (aref z-row x))
+		    (the fixnum (aref row x)))))
+    zz-result))
 
 ;;; Writes frame header
 (defun write-frame-header (maxX maxY cn q-tables sampling tqv out-stream)
-  (declare #.*optimize* (type fixnum maxX maxY cn))
+  (declare #.*optimize* (type fixnum maxX maxY cn)
+	   (type (simple-array uint8-2d-array (*)) q-tables)
+	   ;;(type uint8-array tqv)
+	   )
   (write-huffman-tables out-stream)
   (write-quantization-tables q-tables out-stream)
   ;; writing frame header
@@ -689,7 +750,7 @@
         (write-byte         ; H and V
          (deposit-field (second entry) (byte 4 0)(ash (first entry) 4))
          out-stream)
-        (write-byte (svref tqv i) out-stream))) ; Tq
+        (write-byte (aref tqv i) out-stream))) ; Tq
 
 ;;; Writes byte with stuffing (adds zero after FF code)
 (defun write-stuffed (b s)
@@ -706,7 +767,8 @@
 (defun write-bits (bi ni s)
   (declare #.*optimize*
            ;(special *prev-length* *prev-byte*)
-           (type fixnum bi ni)
+           (type fixnum bi ni *prev-legnth*)
+	   (type uint8 *prev-byte*)
            (type stream s))
   (loop with lim fixnum = (if (> ni 8) 1 0)
         for i fixnum from lim downto 0 do
@@ -738,38 +800,39 @@
 ;;; and last code written to stream for padding
 (defun encode-block (block tables pred s)
   (declare #.*optimize* (type fixnum pred)
-           (type (simple-vector *) block))
+           (type sint16-array block))
   (let* ((ehufsi-dc (first (first tables)))
          (ehufco-dc (second (first tables)))
          (ehufsi-ac (first (second tables)))
          (ehufco-ac (second (second tables)))
-         (newpred (svref block 0))
+         (newpred (aref block 0))
          (diff (minus newpred pred))
          (dcpos (csize diff)))
     (declare (type fixnum pred newpred diff dcpos)
+	     (type uint8-array ehufco-ac ehufco-dc ehufsi-dc ehufsi-ac)
              (dynamic-extent diff dcpos))
     ;; writing dc code first
-    (write-bits (svref ehufco-dc dcpos) (svref ehufsi-dc dcpos) s)
+    (write-bits (aref ehufco-dc dcpos) (aref ehufsi-dc dcpos) s)
     (cond ((minusp diff) (write-bits (1- diff) (csize diff) s))
           (t (write-bits diff (csize diff) s)))
     ;; writing ac sequence
     (loop with r fixnum = 0 for k fixnum from 1 to 63 do
-          (if (zerop (svref block k))
+          (if (zerop (aref block k))
               (if (= k 63)
                   (progn
-                    (write-bits (svref ehufco-ac 0) (svref ehufsi-ac 0) s) ; writing EOB
+                    (write-bits (aref ehufco-ac 0) (aref ehufsi-ac 0) s) ; writing EOB
                     (return))
                 (incf r))
             (progn
               (loop while (> r 15) do
-                    (write-bits (svref ehufco-ac #xf0) (svref ehufsi-ac #xf0) s)
+                    (write-bits (aref ehufco-ac #xf0) (aref ehufsi-ac #xf0) s)
                     (decf r 16))
-              (let* ((ssss (csize (svref block k)))
+              (let* ((ssss (csize (aref block k)))
                      (rs (plus ssss (ash r 4))))
-                (write-bits (svref ehufco-ac rs) (svref ehufsi-ac rs) s)
-                (when (minusp (svref block k))
-                  (decf (svref block k) 1))
-                (write-bits (svref block k) ssss s))
+                (write-bits (aref ehufco-ac rs) (aref ehufsi-ac rs) s)
+                (when (minusp (aref block k))
+                  (decf (aref block k) 1))
+                (write-bits (aref block k) ssss s))
               (setf r 0))))
     newpred))
 
@@ -782,7 +845,7 @@
     (loop for table across tables
           for i fixnum from 0 do
           (write-byte i s)
-          (write-sequence (zigzag table) s))))
+          (write-sequence (zigzag8 table) s))))
 
 ;;; Emits huffman tables in the following order:
 ;;; luminance DC
@@ -842,31 +905,32 @@
         (huffcode (make-array 256))
         (lastk 0))
     (declare #.*optimize* (type fixnum lastk)
-             (type (simple-vector *) bits huffcode huffsize))
-      ;; generating huffsize
+             (type (simple-array t (*)) huffcode huffsize)
+	     (type uint8-array bits))
+    ;; generating huffsize
       (loop for i fixnum from 1 to 16
             with k fixnum = 0 and j fixnum = 1 do
-            (loop until (> j (svref bits (1- i))) do
-                  (setf (svref huffsize k) i)
+            (loop until (> j (aref bits (1- i))) do
+                  (setf (aref huffsize k) i)
                   (incf k)
                   (incf j)
                   finally (setf j 1))
-            finally (progn (setf lastk k) (setf (svref huffsize lastk) 0)))
+            finally (progn (setf lastk k) (setf (aref huffsize lastk) 0)))
 
       ;; generating huffcode
-      (loop with k fixnum = 0 and code fixnum = 0 and si fixnum = (svref huffsize 0) do
+      (loop with k fixnum = 0 and code fixnum = 0 and si fixnum = (aref huffsize 0) do
             (loop do
-                  (setf (svref huffcode k) code)
+                  (setf (aref huffcode k) code)
                   (incf code)
                   (incf k)
-                  when (/= (svref huffsize k) si) do (return))
-            when (zerop (svref huffsize k)) do
+                  when (/= (aref huffsize k) si) do (return))
+            when (zerop (aref huffsize k)) do
             (return)
             else do
             (loop do
                   (setf code (ash code 1))
                   (incf si)
-                  when (= (svref huffsize k) si) do (return)))
+                  when (= (aref huffsize k) si) do (return)))
       (values huffcode huffsize lastk)))
 
 ;;;Builds ordered code tables for encoder
@@ -875,12 +939,12 @@
         (ehufsi (make-array 256)))
     (multiple-value-bind (huffcode huffsize lastk)
         (build-universal-tables bits)
-      (declare (type (simple-vector *) huffsize huffcode)
+      (declare (type (simple-array t (*)) huffsize huffcode)
                (type fixnum lastk))
       (loop with i fixnum for k from 0 below lastk do
-            (setf i (svref huffval k))
-            (setf (svref ehufco i) (svref huffcode k))
-            (setf (svref ehufsi i) (svref huffsize k)))
+            (setf i (aref huffval k))
+            (setf (aref ehufco i) (aref huffcode k))
+            (setf (aref ehufsi i) (aref huffsize k)))
       (list ehufsi ehufco))))
 
 ;;; Main encoder function (user interface)
@@ -888,31 +952,35 @@
                             &key (q-tabs +q-tables+) (sampling '((2 2)(1 1)(1 1))) (q-factor 64))
   (declare #.*optimize*
            (type fixnum ncomp h w q-factor)
-           (type (simple-array uint8 (*)) image))
+           (type uint8-array image))
   (when (= ncomp 1)
     (setq sampling '((1 1))))
-  (let* ((wd (loop for entry in sampling maximize (first entry)))
-         (ht (loop for entry in sampling maximize (second entry)))
-	 (*zz-result* (make-array 64 :element-type 'unsigned-byte))
+  (let* ((wd (loop for entry in sampling maximize (the fixnum (first entry))))
+         (ht (loop for entry in sampling maximize (the fixnum (second entry))))
+	 (*zz-result* (make-array 64 :element-type 'sint16))
 	 (*prev-byte* 0) ; State variables for write-bits
 	 (*prev-length* 0)
          (isampling (convert-sampling sampling wd ht))
-         (height (ash ht 3))
-         (width (ash wd 3))
+         (height (the fixnum (ash ht 3)))
+         (width (the fixnum (ash wd 3)))
          (YUV (make-array ncomp
+			  :element-type 'sint16-2d-array
                           :initial-contents
                           (loop for i fixnum from 0 below ncomp collecting
                                (make-array height
+					   :element-type 'sint16-array
                                            :initial-contents
                                            (loop for j fixnum from 0 below height
-                                              collecting (make-array width))))))
+                                              collecting (make-array width :element-type 'sint16))))))
          (sampled-buf (make-array (mul ht wd)
+				  :element-type 'sint16-2d-array
                                   :initial-contents
                                   (loop for b fixnum from 0 below (mul ht wd)
                                      collecting (make-array 8
+							    :element-type 'sint16-array
                                                             :initial-contents
                                                             (loop for i fixnum from 0 to 7
-                                                               collecting (make-array 8))))))
+                                                               collecting (make-array 8 :element-type 'sint16))))))
          (preds (make-array ncomp :initial-element 0))
          (tqv (case ncomp
                 (3 #(0 1 1)) ; q-tables destinations for various component numbers
@@ -921,6 +989,7 @@
                 (4 #(0 1 2 3))
                 (otherwise (error "Illegal number of components specified")))))
     (declare (special *zz-result* *prev-byte* *prev-length*)
+	     (type (simple-array sint16-2d-array (*)) YUV sampled-buf)
 	     (type fixnum *prev-length* *prev-byte*))
     (cond ((/= ncomp (length sampling))
            (error "Wrong sampling list for ~D component(s)" ncomp))
@@ -932,16 +1001,19 @@
            (error "Invalid sampling specification!")))
     (when (< q-factor 64)
       (let ((q-tabs2 (make-array (length q-tabs)
+				 :element-type 'uint8-2d-array
                                  :initial-contents
                                  (loop for k fixnum from 0 below (length q-tabs)
-                                    collecting (make-array 8 :initial-contents
+                                    collecting (make-array 8 :element-type 'uint8-array
+							   :initial-contents
                                                            (loop for i fixnum from 0 to 7
                                                               collecting (make-array 8 :element-type 'uint8)))))))
+	(declare (type (simple-array uint8-2d-array (*)) q-tabs2))
         (loop for entry across q-tabs
            for entry2 across q-tabs2 do
            (loop for x fixnum from 0 to 7 do
                 (loop for y fixnum from 0 to 7 do
-                     (setf (dbref entry2 x y) (the fixnum (dbref entry x y))))))
+                     (setf (u8ref entry2 x y) (the fixnum (u8ref entry x y))))))
         (setq q-tabs q-tabs2))
       (loop for entry across q-tabs do  ; scaling all q-tables
            (q-scale entry q-factor)))
@@ -972,7 +1044,7 @@
            (loop for dx fixnum from 0 below w by width do
                 (multiple-value-bind (xlim ylim)
                     (if (= ncomp 3)
-                        (colorspace-convert image YUV dx dy h w height width)
+                       (colorspace-convert image YUV dx dy h w height width)
                         (crop-image image YUV dx dy h w height width ncomp))
                   (declare (type fixnum xlim ylim)
                            (dynamic-extent xlim ylim))
@@ -986,7 +1058,7 @@
                                         luminance-tabset
                                         chrominance-tabset)
                      ;; choosing appropriate q-table for a component
-                     for q-tab = (svref q-tabs (svref tqv cn))
+                     for q-tab = (aref q-tabs (aref tqv cn))
                      for H fixnum = (first freq)
                      for V fixnum = (second freq) do
                      (subsample comp sampled-buf H V (minus xlim dx) (minus ylim dy) iH iV)
@@ -999,20 +1071,20 @@
                                                 (plus (rem (ash xlim -3) H) ypos)
                                                 (plus x ypos)) do
                            (crunch sampled-buf pos q-tab)
-                           (setf (svref preds cn)
-                                 (encode-block (zigzag (svref sampled-buf pos))
-                                               hufftabs (svref preds cn) out-stream)))))))))
+                           (setf (aref preds cn)
+                                 (encode-block (zigzag (aref sampled-buf pos))
+                                               hufftabs (aref preds cn) out-stream)))))))))
     (unless (zerop *prev-length*)
       (write-stuffed (deposit-field #xff ; byte padding & flushing
                                     (byte (minus 8 *prev-length*) 0)
-                                    (ash *prev-byte* (minus 8 *prev-length*)))
+                                    (the fixnum (ash (the uint8 *prev-byte*) (the uint8 (minus 8 *prev-length*)))))
                      out-stream))
     (write-marker +M_EOI+ out-stream)))
 
 (defun encode-image (filename image ncomp h w &rest args)
   (with-open-file (out-stream filename
                               :direction :output
-                              :element-type 'unsigned-byte
+                              :element-type 'uint8
                               :if-exists :supersede)
     (apply #'encode-image-stream out-stream image ncomp h w args)))
 
@@ -1027,13 +1099,13 @@
   (y 0 :type fixnum) ; positions
   (cdesc (make-array 4
                      :initial-contents (loop repeat 4 collect (list 0 0)))
-         :type (simple-vector *))) ; descriptors of all components in the scan
+         :type (simple-array t (*)))) ; descriptors of all components in the scan
 
 ;;; Contains huffman decoding tables
 (defstruct huffstruct
   mincode
   maxcode
-  (bits (make-array 16) :type (simple-vector *))
+  (bits (make-array 16 :element-type 'uint8) :type uint8-array)
   huffval
   huffcode
   valptr)
@@ -1050,20 +1122,20 @@
                      collecting
                         (make-array 8 :initial-contents
                                     (loop for i fixnum from 0 to 7
-                                          collecting (make-array 8))))) :type (simple-vector *))
+                                          collecting (make-array 8 :element-type 'uint8))))) :type (simple-array uint8-2d-array (*)))
   (huff-ac (make-array 2 :initial-contents
-                       (list (make-huffstruct) (make-huffstruct))) :type (simple-vector *))
+                       (list (make-huffstruct) (make-huffstruct))) :type (simple-array t (*)))
   (huff-dc (make-array 2 :initial-contents
-                       (list (make-huffstruct) (make-huffstruct))) :type (simple-vector *))
-  (cid (make-array 4) :type (simple-vector *))
+                       (list (make-huffstruct) (make-huffstruct))) :type (simple-array t (*)))
+  (cid (make-array 4) :type (simple-array t (*)))
   (scans (make-array 4 :initial-contents
-                     (loop for i fixnum from 0 to 3 collecting (make-scan))) :type (simple-vector *))
-  (H (make-array 4) :type (simple-vector *))
-  (V (make-array 4) :type (simple-vector *))
-  (iH (make-array 4) :type (simple-vector *))
-  (iV (make-array 4) :type (simple-vector *))
-  (qdest (make-array 4) :type (simple-vector *))
-  (zz (make-array 64) :type (simple-vector *))
+                     (loop for i fixnum from 0 to 3 collecting (make-scan))) :type (simple-array t (*)))
+  (H (make-array 4) :type (simple-array t (*)))
+  (V (make-array 4) :type (simple-array t (*)))
+  (iH (make-array 4) :type (simple-array t (*)))
+  (iV (make-array 4) :type (simple-array t (*)))
+  (qdest (make-array 4) :type (simple-array t (*)))
+  (zz (make-array 64 :element-type 'sint16) :type sint16-array)
   (ncomp 0 :type fixnum))
 
 ;;; Reads an JPEG marker from the stream
@@ -1099,13 +1171,27 @@
 ;;; 'Inverse zigzag transform'
 (defun izigzag (inbuf zzbuf)
   (declare #.*optimize*
-           (type (simple-vector *) inbuf zzbuf))
+           (type sint16-array inbuf)
+	   (type sint16-2d-array zzbuf +zigzag-index+))
   "Performs inverse zigzag block arrangement"
   (loop for zrow across +zigzag-index+
         for row across zzbuf do
         (loop for pos fixnum across zrow
               for x fixnum from 0 do
-              (setf (svref row x) (svref inbuf pos))))
+              (setf (aref row x) (aref inbuf pos))))
+  zzbuf)
+
+(defun izigzag8 (inbuf zzbuf)
+  (declare #.*optimize*
+           (type uint8-array inbuf)
+	   (type uint8-2d-array zzbuf)
+	   )
+  "Performs inverse zigzag block arrangement"
+  (loop for zrow across +zigzag-index+
+        for row across zzbuf do
+        (loop for pos fixnum across zrow
+              for x fixnum from 0 do
+              (setf (aref row x) (aref inbuf pos))))
   zzbuf)
 
 ;;; Reads in quantization tables
@@ -1114,32 +1200,32 @@
   (let ((len (minus (read-word s) 2)))
     (loop for i fixnum from (1- len) downto 0 by 65
           for tq fixnum = (logand (read-byte s) 7)
-          with intable = (make-array 64)
-          for table = (svref (descriptor-qtables image) tq) do
+          with intable of-type uint8-array = (make-array 64 :element-type 'uint8)
+          for table = (aref (descriptor-qtables image) tq) do
           (loop for pos from 0 to 63 do
-                (setf (svref intable pos) (read-byte s)))
-          (izigzag intable table))))
+                (setf (aref intable pos) (read-byte s)))
+          (izigzag8 intable table))))
 
 ;;; Builds up decoder tables
 (defun build-decoder-tables (bits huffcode)
   "Builds up decoder-specific tables"
-  (let ((maxcode (make-array 17))
-        (mincode (make-array 17))
-        (valptr (make-array 17)))
+  (let ((maxcode (make-array 17 :element-type 'fixnum))
+        (mincode (make-array 17 :element-type 'fixnum))
+        (valptr (make-array 17 :element-type 'fixnum)))
     (loop with i fixnum = 0
           and j fixnum = 0 do
           (when (loop
                  (incf i)
                  (when (> i 16)
                    (return t))
-                 (cond ((zerop (svref bits (1- i)))
-                        (setf (svref maxcode i) -1))
+                 (cond ((zerop (aref bits (1- i)))
+                        (setf (aref maxcode i) -1))
                        (t (return nil))))
             (return (values maxcode mincode valptr)))
-          (setf (svref valptr i) j)
-          (setf (svref mincode i) (svref huffcode j))
-          (incf j (1- (svref bits (1- i))))
-          (setf (svref maxcode i) (svref huffcode j))
+          (setf (aref valptr i) j)
+          (setf (aref mincode i) (aref huffcode j))
+          (incf j (1- (aref bits (1- i))))
+          (setf (aref maxcode i) (aref huffcode j))
           (incf j))))
 
 ;;; Loads huffman tables
@@ -1151,22 +1237,23 @@
           for tc fixnum = (ash tcth -4)
           for th fixnum = (logand tcth 15)
           for tables = (if (zerop tc)
-                           (svref (descriptor-huff-ac image) th)
-                         (svref (descriptor-huff-dc image) th))
+                           (aref (descriptor-huff-ac image) th)
+                         (aref (descriptor-huff-dc image) th))
           for bits = (huffstruct-bits tables)
           for sum fixnum = 0 do
           (loop for i fixnum from 0 to 15
                 for entry fixnum = (read-byte s) do
                 (incf sum entry)
-                (setf (svref bits i) entry))
+                (setf (aref bits i) entry))
           (setf (huffstruct-huffval tables)
-                (make-array sum :initial-contents (loop for i fixnum from 0 below sum
+                (make-array sum :element-type 'uint8
+			    :initial-contents (loop for i fixnum from 0 below sum
                                                         collecting (read-byte s))))
           (incf count (plus sum 17))
-          (multiple-value-bind (maxcode mincode valptr)
+	 (multiple-value-bind (maxcode mincode valptr)
               (build-decoder-tables bits (setf (huffstruct-huffcode tables)
                                                (build-universal-tables bits )))
-            (declare (type (simple-vector *) maxcode mincode valptr))
+            ;;(declare (type uint8-array mincode valptr))
             (setf (huffstruct-maxcode tables) maxcode)
             (setf (huffstruct-mincode tables) mincode)
             (setf (huffstruct-valptr tables) valptr))
@@ -1189,6 +1276,7 @@
 
 ;;; EXTEND procedure, as described in the standard
 (defun extend (v tt)
+  (declare (type fixnum tt))
   "EXTEND procedure, as described in spec."
   (let ((vt (ash 2 (minus tt 2))))
     (if (< v vt)
@@ -1225,10 +1313,10 @@
   "The DECODE procedure, as described in CCITT rec."
   (let ((i 1)
         (code (funcall nextbit s)))
-    (loop while (> code (svref maxcode i)) do
+    (loop while (> code (aref maxcode i)) do
           (incf i)
           (setf code (plus (ash code 1) (funcall nextbit s))))
-    (svref huffval (plus (svref valptr i) (minus code (svref mincode i))))))
+    (aref huffval (plus (aref valptr i) (minus code (aref mincode i))))))
 
 ;;; Recieves ssss bits from the stream
 (defun recieve (ssss nextbit s)
@@ -1245,7 +1333,7 @@
 (defun decode-ac (zz maxcode mincode valptr huffval nextbit s)
   "Decodes AC coefficients"
   (declare #.*optimize*
-           (type (simple-vector *) zz maxcode mincode valptr huffval))
+           (type (simple-array uint8 (*)) huffval))
   (fill zz 0 :start 1)
   (loop with k fixnum = 1
         for rs fixnum = (decode maxcode mincode valptr huffval nextbit s)
@@ -1256,7 +1344,7 @@
                    (incf k 16)
                  (return zz)))
               (t (incf k r)
-                 (setf (svref zz k)
+                 (setf (aref zz k)
                        (extend (recieve ssss nextbit s) ssss))
                  (if (= k 63)
                      (return zz)
@@ -1267,19 +1355,20 @@
   "Decodes DC value"
   (let ((tt (decode maxcode mincode valptr huffval nextbit s)))
   (declare #.*optimize*
-           (type (simple-vector *)  maxcode mincode valptr huffval)
+           (type (simple-array uint8 (*)) huffval)
            (fixnum tt))
     (extend (recieve tt nextbit s) tt)))
 
 ;;; Decodes single 8x8 block
 (defun decode-block (zz tabs nextbit s)
   "Reads one 8x8 block. Doesn't deals with predictors."
-  (let ((tdc (svref tabs 0))
-        (tac (svref tabs 1)))
+  (let ((tdc (aref tabs 0))
+        (tac (aref tabs 1)))
   (declare #.*optimize*
-           (type (simple-vector *) zz tabs)
+           (type sint16-array zz)
+	   (type (simple-array sint16-2d-array (*)) tabs)
            (type huffstruct tac tdc))
-  (setf (svref zz 0) (decode-dc (huffstruct-maxcode tdc)
+  (setf (aref zz 0) (decode-dc (huffstruct-maxcode tdc)
                                 (huffstruct-mincode tdc)
                                 (huffstruct-valptr tdc)
                                 (huffstruct-huffval tdc) nextbit s))
@@ -1294,9 +1383,8 @@
 (defun dequantize (x y block table)
   "Dequantizes a single sample"
   (declare #.*optimize*
-           (type fixnum x y)
-           (type (simple-vector *) block table))
-  (mul (dbref block x y) (dbref table x y)))
+           (type fixnum x y))
+  (mul (s16ref block x y) (u8ref table x y)))
 
 ;;;Macro that bounds value in IDCT
 (defmacro dct-limit (n)
@@ -1311,25 +1399,25 @@
         (dcval 0))
     (declare #.*optimize*
              (type fixnum tmp0 tmp1 tmp2 tmp3 tmp10 tmp11 tmp12 tmp13 z1 z2 z3 z4 z5 dcval)
-             (type (simple-vector *) block)
+             (type sint16-2d-array block *ws*)
              (dynamic-extent tmp0 tmp1 tmp2 tmp3 tmp10 tmp11 tmp12 tmp13 z1 z2 z3 z4 z5 dcval))
     (loop for dptr fixnum from 0 to 7 ; iterating over columns
-          if (and (zerop (dbref block dptr 1))
-                  (zerop (dbref block dptr 2))
-                  (zerop (dbref block dptr 3))
-                  (zerop (dbref block dptr 4))
-                  (zerop (dbref block dptr 5))
-                  (zerop (dbref block dptr 6))
-                  (zerop (dbref block dptr 7))) do
-          (setf dcval (ash (dequantize dptr 0 block q-table) 1))
-          (setf (dbref *ws* dptr 0) dcval)
-          (setf (dbref *ws* dptr 1) dcval)
-          (setf (dbref *ws* dptr 2) dcval)
-          (setf (dbref *ws* dptr 3) dcval)
-          (setf (dbref *ws* dptr 4) dcval)
-          (setf (dbref *ws* dptr 5) dcval)
-          (setf (dbref *ws* dptr 6) dcval)
-          (setf (dbref *ws* dptr 7) dcval)
+          if (and (zerop (s16ref block dptr 1))
+                  (zerop (s16ref block dptr 2))
+                  (zerop (s16ref block dptr 3))
+                  (zerop (s16ref block dptr 4))
+                  (zerop (s16ref block dptr 5))
+                  (zerop (s16ref block dptr 6))
+                  (zerop (s16ref block dptr 7))) do
+          (setf dcval (ash (the fixnum (dequantize dptr 0 block q-table)) 1))
+          (setf (s16ref *ws* dptr 0) dcval)
+          (setf (s16ref *ws* dptr 1) dcval)
+          (setf (s16ref *ws* dptr 2) dcval)
+          (setf (s16ref *ws* dptr 3) dcval)
+          (setf (s16ref *ws* dptr 4) dcval)
+          (setf (s16ref *ws* dptr 5) dcval)
+          (setf (s16ref *ws* dptr 6) dcval)
+          (setf (s16ref *ws* dptr 7) dcval)
           else do
           (setf z2 (dequantize dptr 2 block q-table))
           (setf z3 (dequantize dptr 6 block q-table))
@@ -1367,43 +1455,43 @@
           (incf tmp1 (plus z2 z4))
           (incf tmp2 (plus z2 z3))
           (incf tmp3 (plus z1 z4))
-          (setf (dbref *ws* dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
-          (setf (dbref *ws* dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
-          (setf (dbref *ws* dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
-          (setf (dbref *ws* dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
-          (setf (dbref *ws* dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
-          (setf (dbref *ws* dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
-          (setf (dbref *ws* dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
-          (setf (dbref *ws* dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
+          (setf (s16ref *ws* dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
+          (setf (s16ref *ws* dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
+          (setf (s16ref *ws* dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
+          (setf (s16ref *ws* dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
+          (setf (s16ref *ws* dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
+          (setf (s16ref *ws* dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
+          (setf (s16ref *ws* dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
+          (setf (s16ref *ws* dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
 
-    (loop for row across block ; iterating over rows
-          for inrow across *ws*
+    (loop for row of-type sint16-array across block ; iterating over rows
+          for inrow of-type sint16-array across *ws*
           if (not (find-if-not #'zerop inrow :start 1)) do
-          (setf dcval (dct-limit (descale (svref inrow 0) 4)))
-          (setf (svref row 0) dcval)
-          (setf (svref row 1) dcval)
-          (setf (svref row 2) dcval)
-          (setf (svref row 3) dcval)
-          (setf (svref row 4) dcval)
-          (setf (svref row 5) dcval)
-          (setf (svref row 6) dcval)
-          (setf (svref row 7) dcval)
+          (setf dcval (dct-limit (descale (aref inrow 0) 4)))
+          (setf (aref row 0) dcval)
+          (setf (aref row 1) dcval)
+          (setf (aref row 2) dcval)
+          (setf (aref row 3) dcval)
+          (setf (aref row 4) dcval)
+          (setf (aref row 5) dcval)
+          (setf (aref row 6) dcval)
+          (setf (aref row 7) dcval)
           else do
-          (setf z2 (svref inrow 2))
-          (setf z3 (svref inrow 6))
+          (setf z2 (aref inrow 2))
+          (setf z3 (aref inrow 6))
           (setf z1 (mul (plus z2 z3) +FIX-0-541196100+))
           (setf tmp2 (plus z1 (mul z3 (- +FIX-1-847759065+))))
           (setf tmp3 (plus z1 (mul z2 +FIX-0-765366865+)))
-          (setf tmp0 (ash (plus (svref inrow 0) (svref inrow 4)) dct-shift))
-          (setf tmp1 (ash (minus (svref inrow 0) (svref inrow 4)) dct-shift))
+          (setf tmp0 (ash (plus (aref inrow 0) (aref inrow 4)) dct-shift))
+          (setf tmp1 (ash (minus (aref inrow 0) (aref inrow 4)) dct-shift))
           (setf tmp10 (plus tmp0 tmp3))
           (setf tmp13 (minus tmp0 tmp3))
           (setf tmp11 (plus tmp1 tmp2))
           (setf tmp12 (minus tmp1 tmp2))
-          (setf tmp0 (svref inrow 7))
-          (setf tmp1 (svref inrow 5))
-          (setf tmp2 (svref inrow 3))
-          (setf tmp3 (svref inrow 1))
+          (setf tmp0 (aref inrow 7))
+          (setf tmp1 (aref inrow 5))
+          (setf tmp2 (aref inrow 3))
+          (setf tmp3 (aref inrow 1))
           (setf z1 (plus tmp0 tmp3))
           (setf z2 (plus tmp1 tmp2))
           (setf z3 (plus tmp0 tmp2))
@@ -1423,14 +1511,14 @@
           (incf tmp1 (plus z2 z4))
           (incf tmp2 (plus z2 z3))
           (incf tmp3 (plus z1 z4))
-          (setf (svref row 0) (dct-limit (descale (plus tmp10 tmp3) +shift+4+)))
-          (setf (svref row 7) (dct-limit (descale (minus tmp10 tmp3) +shift+4+)))
-          (setf (svref row 1) (dct-limit (descale (plus tmp11 tmp2) +shift+4+)))
-          (setf (svref row 6) (dct-limit (descale (minus tmp11 tmp2) +shift+4+)))
-          (setf (svref row 2) (dct-limit (descale (plus tmp12 tmp1) +shift+4+)))
-          (setf (svref row 5) (dct-limit (descale (minus tmp12 tmp1) +shift+4+)))
-          (setf (svref row 3) (dct-limit (descale (plus tmp13 tmp0) +shift+4+)))
-          (setf (svref row 4) (dct-limit (descale (minus tmp13 tmp0) +shift+4+))))))
+          (setf (aref row 0) (dct-limit (descale (plus tmp10 tmp3) +shift+4+)))
+          (setf (aref row 7) (dct-limit (descale (minus tmp10 tmp3) +shift+4+)))
+          (setf (aref row 1) (dct-limit (descale (plus tmp11 tmp2) +shift+4+)))
+          (setf (aref row 6) (dct-limit (descale (minus tmp11 tmp2) +shift+4+)))
+          (setf (aref row 2) (dct-limit (descale (plus tmp12 tmp1) +shift+4+)))
+          (setf (aref row 5) (dct-limit (descale (minus tmp12 tmp1) +shift+4+)))
+          (setf (aref row 3) (dct-limit (descale (plus tmp13 tmp0) +shift+4+)))
+          (setf (aref row 4) (dct-limit (descale (minus tmp13 tmp0) +shift+4+))))))
 
 ;;; Places decoded block into the image buffer, with necessary upsampling
 (defun upsample (image scan block x y H V offset nwidth nw nx dend)
@@ -1442,8 +1530,8 @@
          (nxbase (mul xbase ncomp))
          (nybase (mul ybase nwidth)))
     (declare #.*optimize*
-             (type (simple-vector *) block)
-             (type (simple-array uint8 (*)) buffer)
+             (type sint16-2d-array block)
+             (type uint8-array buffer)
              (type fixnum x y H V ncomp xbase ybase nwidth nx dend nxbase nybase offset)
              (dynamic-extent ncomp xbase ybase nxbase nybase))
     (loop for row across block
@@ -1451,15 +1539,15 @@
           for ypos fixnum from nybase by nw do
           (loop for val fixnum across row
                 for x fixnum from xbase below (descriptor-width image) by H
-                for pos fixnum from (+ ypos offset nxbase) by nx do
+                for pos fixnum from (the fixnum (+ ypos offset nxbase)) by nx do
                 (if (= 1 H V)
-                    (setf (aref buffer pos) (the uint8 val))
+                    (setf (aref buffer pos) val)
                   (loop for dy fixnum from 0 below V
                         for dypos fixnum from pos below dend by nwidth
                         for dxend from (mul (plus (1+ y) dy) nwidth) by nwidth do
                         (loop for dx fixnum from 0 below H
                               for dpos fixnum from dypos below dxend by 3 do
-                              (setf (aref buffer dpos) (the uint8 val)))))))))
+                              (setf (aref buffer dpos) val))))))))
 
 ;;; Reads and decodes either whole scan or restart interval
 (defun decode-chunk (image scan s)
@@ -1472,25 +1560,34 @@
                          (loop
                            ;; collecting sampling rates for a components in the scan
                            for i fixnum from 0 below ncomp
-                           for cid fixnum = (first (svref (scan-cdesc scan) i))
+                           for cid fixnum = (first (aref (scan-cdesc scan) i))
                            for pos fixnum = (position cid (descriptor-cid image))
-                           collecting (list (svref (descriptor-H image) pos)
-                                            (svref (descriptor-V image) pos)))))
-         (Hmax (loop for entry across fr maximize (first entry)))
-         (Vmax (loop for entry across fr maximize (second entry)))
+                           collecting (list (aref (descriptor-H image) pos)
+                                            (aref (descriptor-V image) pos)))))
+         (Hmax (loop for entry across fr maximize (the fixnum (first entry))))
+         (Vmax (loop for entry across fr maximize (the fixnum (second entry))))
          (x-growth (ash Hmax 3))
          (y-growth (ash Vmax 3))
-	 (*ws* (make-array 8 :initial-contents (loop for i from 0 to 7 collecting (make-array 8)))) ; Temporary workspace for IDCT
+	 (*ws* (2d-sint16-array
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0))) ; Temporary workspace for IDCT
          (freqs (make-array ncomp :initial-contents
                             (loop for i fixnum from 0 below ncomp ; collecting sampling frequencies
-                                  for cid fixnum = (first (svref (scan-cdesc scan) i))
+                                  for cid fixnum = (first (aref (scan-cdesc scan) i))
                                   for pos fixnum = (position cid (descriptor-cid image))
-                                  collecting (list (svref (descriptor-iH image) pos)
-                                                   (svref (descriptor-iV image) pos)))))
-         (preds (make-array ncomp :initial-element 0)))
+                                  collecting (list (aref (descriptor-iH image) pos)
+                                                   (aref (descriptor-iV image) pos)))))
+         (preds (make-array ncomp :initial-element 0 :element-type 'sint16)))
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
-             (type (simple-vector *) freqs fr)
+             (type (simple-array t (*)) freqs fr)
+	     (type sint16-2d-array *ws*)
 	     (special *ws*)
              (dynamic-extent fr freqs))
     (catch 'marker
@@ -1499,39 +1596,40 @@
            (make-array ncomp
                        :initial-contents
                        (loop for i fixnum from 0 below ncomp
-                             for ta fixnum = (logand (second (svref (scan-cdesc scan) i)) 15)
-                             for td fixnum = (ash (second (svref (scan-cdesc scan) i)) -4)
-                             collecting (vector (svref (descriptor-huff-ac image) ta)
-                                                (svref (descriptor-huff-dc image) td))))
+                             for ta fixnum = (logand (second (aref (scan-cdesc scan) i)) 15)
+                             for td fixnum = (ash (the fixnum (second (aref (scan-cdesc scan) i))) -4)
+                             collecting (vector (aref (descriptor-huff-ac image) ta)
+                                                (aref (descriptor-huff-dc image) td))))
         do (loop for comp fixnum from 0 below ncomp
-		 with zzbuf = #(#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0)
-				#(0  0  0  0  0  0  0  0))
+	      with zzbuf = (2d-sint16-array
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0))
                  for pos fixnum =
-                    (position (first (svref (scan-cdesc scan) comp))
+                    (position (the fixnum (first (aref (scan-cdesc scan) comp)))
                               (descriptor-cid image)) ; an offset for byte positioning
-                 for q-tab = (svref (descriptor-qtables image) (svref (descriptor-qdest image) comp))
-                 for H fixnum = (first (svref freqs comp))
-                 for V fixnum = (second (svref freqs comp))
+                 for q-tab = (aref (descriptor-qtables image) (aref (descriptor-qdest image) comp))
+                 for H fixnum = (first (aref freqs comp))
+                 for V fixnum = (second (aref freqs comp))
                  for nw fixnum = (mul nwidth V)
                  for nx fixnum = (mul (descriptor-ncomp image) H)
-                 for blocks-y fixnum = (second (svref fr comp))
-                 for blocks-x fixnum = (first (svref fr comp)) do
+                 for blocks-y fixnum = (second (aref fr comp))
+                 for blocks-x fixnum = (first (aref fr comp)) do
                     (loop for y fixnum from 0 below blocks-y
-                          for y-pos fixnum from (mul (ash y 3) V) by (ash V 3) do
+		       for y-pos fixnum from (mul (ash y 3) V) by (ash V 3) do
                              (loop for x fixnum from 0 below blocks-x
                                    for x-pos fixnum from (mul (ash x 3) H) by (ash H 3)
-                                   for decoded-block =
-                                      (izigzag (decode-block (descriptor-zz image)
-                                                             (svref tables comp) nextbit s) zzbuf) do
+                                   for decoded-block of-type sint16-2d-array =
+				  (izigzag (decode-block (descriptor-zz image)
+							 (aref tables comp) nextbit s) zzbuf) do
                                    ;; DC decoding and predictor update
-                                      (incf (dbref decoded-block 0 0) (svref preds comp))
-                                      (setf (svref preds comp) (dbref decoded-block 0 0))
+                                      (incf (s16ref decoded-block 0 0) (aref preds comp))
+                                      (setf (aref preds comp) (s16ref decoded-block 0 0))
                                       (when (and (< (plus x-pos (scan-x scan)) (descriptor-width image))
                                                  (< (plus y-pos (scan-y scan)) (descriptor-height image)))
                                         ;; inverse DCT and block write to the buffer
@@ -1545,13 +1643,13 @@
 
 ;;; Scan decoding subroutine
 (defun decode-scan (image i s)
-  (let ((scan (svref (descriptor-scans image) i)))
+  (let ((scan (aref (descriptor-scans image) i)))
     (read-byte s) ; length
     (read-byte s)
     (loop with ncomp fixnum = (setf (scan-ncomp scan) (read-byte s))
           for j fixnum from 0 below ncomp do
-          (setf (first (svref (scan-cdesc scan) j)) (read-byte s)) ; component ID
-          (setf (second (svref (scan-cdesc scan) j)) (read-byte s))) ; Td and Ta nibbles
+          (setf (first (aref (scan-cdesc scan) j)) (read-byte s)) ; component ID
+          (setf (second (aref (scan-cdesc scan) j)) (read-byte s))) ; Td and Ta nibbles
     (read-byte s)
     (read-byte s)
     (read-byte s)
@@ -1584,14 +1682,14 @@
                 for cb fixnum = (aref buffer pu)
                 for cr fixnum = (aref buffer pv) do
                 (setf (aref buffer py) ; BLUE
-                      (the uint8 (limit (plus yy (svref *cb-b-tab* cb)))))
+                      (the uint8 (limit (plus yy (aref *cb-b-tab* cb)))))
                 (setf (aref buffer pu) ; GREEN
                       (the uint8 (limit (plus yy (ash (plus
-						       (svref *cb-g-tab* cb)
-						       (svref *cr-g-tab* cr))
+						       (aref *cb-g-tab* cb)
+						       (aref *cr-g-tab* cr))
 						      (- shift))))))
                 (setf (aref buffer pv) ; RED
-                      (the uint8 (limit (plus yy (svref *cr-r-tab* cr)))))))))
+                      (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
 
 (defun decode-frame-beginning (image s)
   (read-byte s) ; length
@@ -1609,21 +1707,21 @@
   (decode-frame-beginning image s)
   (loop for i fixnum from 0 below (descriptor-ncomp image)
         with hv fixnum do
-        (setf (svref (descriptor-cid image) i) (read-byte s)) ; Cj
+        (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
         (setf hv (read-byte s)) ; HV
-        (setf (svref (descriptor-H image) i) (ash hv -4))
-        (setf (svref (descriptor-V image) i) (logand hv 7))
-        (setf (svref (descriptor-qdest image) i) (read-byte s)))
+        (setf (aref (descriptor-H image) i) (ash hv -4))
+        (setf (aref (descriptor-V image) i) (logand hv 7))
+        (setf (aref (descriptor-qdest image) i) (read-byte s)))
   (let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
-                    collecting (list (svref (descriptor-H image) i)
-                                     (svref (descriptor-V image) i))))
+                    collecting (list (aref (descriptor-H image) i)
+                                     (aref (descriptor-V image) i))))
          (Hmax (loop for entry in frl maximize (first entry)))
          (Vmax (loop for entry in frl maximize (second entry)))
          (freqs (convert-sampling frl Hmax Vmax)))
     (loop for entry across freqs
           for i fixnum from 0 do
-          (setf (svref (descriptor-iH image) i) (first entry))
-          (setf (svref (descriptor-iV image) i) (second entry)))
+          (setf (aref (descriptor-iH image) i) (first entry))
+          (setf (aref (descriptor-iV image) i) (second entry)))
     (loop with term fixnum = 0
           for j fixnum from 0
           until (= term +M_EOI+) do
@@ -1649,7 +1747,7 @@ progressive DCT-based JPEGs."
 
 ;;; Top level decoder function
 (defun decode-image (filename)
-  (with-open-file (in filename :direction :input :element-type 'unsigned-byte)
+  (with-open-file (in filename :direction :input :element-type 'uint8)
     (decode-stream in)))
 
 (defun decode-stream-height-width (stream)
