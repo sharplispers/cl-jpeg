@@ -72,12 +72,14 @@
                  izigzag write-bits))
 
 (deftype uint8 () '(unsigned-byte 8))
-
 (deftype uint8-array () '(simple-array uint8 (*)))
 (deftype uint8-2d-array () '(simple-array uint8-array (*)))
 
-(deftype sint16 () '(signed-byte 16))
+(deftype suint8 () '(signed-byte 8))
+(deftype sint8-array () '(simple-array sint8 (*)))
+(deftype sint8-2d-array () '(simple-array sint8-array (*)))
 
+(deftype sint16 () '(signed-byte 16))
 (deftype sint16-array () '(simple-array sint16 (*)))
 (deftype sint16-2d-array () '(simple-array sint16-array (*)))
 
@@ -110,6 +112,12 @@
 
 (defmacro mul (a b)
   `(the fixnum (* (the fixnum ,a) (the fixnum ,b)))))
+
+(defmacro plus3 (x y z)
+  `(plus (plus ,x ,y) ,z))
+
+(defmacro mul3 (x y z)
+  `(mul (mul ,x ,y) ,z))
 
 ;;; Somewhat silly, but who knows...
 (when (/= (integer-length most-positive-fixnum)
@@ -586,12 +594,6 @@
   (declare #.*optimize* (type fixnum x n))
   (the fixnum (ash (plus x (ash 1 (1- n))) (- n))))
 
-(defmacro plus3 (x y z)
-  `(plus (plus ,x ,y) ,z))
-
-(defmacro mul3 (x y z)
-  `(mul (mul ,x ,y) ,z))
-
 ;;; Implementation of Loeffer, Ligtenberg and Moschytz forward DCT
 (defun llm-dct (data)
   (declare #.*optimize* (type sint16-2d-array data))
@@ -809,7 +811,7 @@
          (diff (minus newpred pred))
          (dcpos (csize diff)))
     (declare (type fixnum pred newpred diff dcpos)
-	     (type uint8-array ehufco-ac ehufco-dc ehufsi-dc ehufsi-ac)
+	     (type fixnum-array ehufco-ac ehufco-dc ehufsi-dc ehufsi-ac)
              (dynamic-extent diff dcpos))
     ;; writing dc code first
     (write-bits (aref ehufco-dc dcpos) (aref ehufsi-dc dcpos) s)
@@ -901,11 +903,11 @@
 
 ;;; Builds common decoding and encoding tables
 (defun build-universal-tables (bits)
-  (let ((huffsize (make-array 256))
-        (huffcode (make-array 256))
+  (let ((huffsize (make-array 256 :element-type 'fixnum))
+        (huffcode (make-array 256 :element-type 'fixnum))
         (lastk 0))
     (declare #.*optimize* (type fixnum lastk)
-             (type (simple-array t (*)) huffcode huffsize)
+             (type fixnum-array huffcode huffsize)
 	     (type uint8-array bits))
     ;; generating huffsize
       (loop for i fixnum from 1 to 16
@@ -935,11 +937,11 @@
 
 ;;;Builds ordered code tables for encoder
 (defun build-tables (bits huffval)
-  (let ((ehufco (make-array 256))
-        (ehufsi (make-array 256)))
+  (let ((ehufco (make-array 256 :element-type 'fixnum))
+        (ehufsi (make-array 256 :element-type 'fixnum)))
     (multiple-value-bind (huffcode huffsize lastk)
         (build-universal-tables bits)
-      (declare (type (simple-array t (*)) huffsize huffcode)
+      (declare (type fixnum-array huffsize huffcode)
                (type fixnum lastk))
       (loop with i fixnum for k from 0 below lastk do
             (setf i (aref huffval k))
@@ -1392,7 +1394,7 @@
 
 ;;; Inverse LLM DCT and dequantization
 (defun inverse-llm-dct (block q-table)
-  "Performs Inverse LMM DCT and dequantizetion"
+  "Performs Inverse LMM DCT and dequantization"
   (let ((tmp0 0) (tmp1 0) (tmp2 0) (tmp3 0)
         (tmp10 0) (tmp11 0) (tmp12 0) (tmp13 0)
         (z1 0) (z2 0) (z3 0) (z4 0) (z5 0)
