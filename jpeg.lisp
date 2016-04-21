@@ -66,7 +66,7 @@
 
 (in-package #:jpeg)
 
-#+nil(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
+(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
@@ -111,13 +111,13 @@
   `(the fixnum (- (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro mul (a b)
-  `(the fixnum (* (the fixnum ,a) (the fixnum ,b)))))
+  `(the fixnum (* (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro plus3 (x y z)
   `(plus (plus ,x ,y) ,z))
 
 (defmacro mul3 (x y z)
-  `(mul (mul ,x ,y) ,z))
+  `(mul (mul ,x ,y) ,z)))
 
 ;;; Somewhat silly, but who knows...
 (when (/= (integer-length most-positive-fixnum)
