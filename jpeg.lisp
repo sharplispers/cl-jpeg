@@ -66,7 +66,7 @@
 
 (in-package #:jpeg)
 
-(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
+(declaim (inline csize quantize get-average zigzag
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
@@ -756,7 +756,7 @@
 
 ;;; Writes byte with stuffing (adds zero after FF code)
 (defun write-stuffed (b s)
-  (declare #.*optimize* (type fixnum b)
+  (declare #.*optimize* (type uint8 b)
            (type stream s))
    (write-byte b s)
    (if (= b #xFF)
