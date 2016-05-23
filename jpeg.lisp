@@ -66,7 +66,7 @@
 
 (in-package #:jpeg)
 
-#+nil(declaim (inline csize write-stuffed quantize get-average zigzag encode-block
+(declaim (inline csize quantize get-average zigzag
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
@@ -111,13 +111,13 @@
   `(the fixnum (- (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro mul (a b)
-  `(the fixnum (* (the fixnum ,a) (the fixnum ,b)))))
+  `(the fixnum (* (the fixnum ,a) (the fixnum ,b))))
 
 (defmacro plus3 (x y z)
   `(plus (plus ,x ,y) ,z))
 
 (defmacro mul3 (x y z)
-  `(mul (mul ,x ,y) ,z))
+  `(mul (mul ,x ,y) ,z)))
 
 ;;; Somewhat silly, but who knows...
 (when (/= (integer-length most-positive-fixnum)
@@ -756,7 +756,7 @@
 
 ;;; Writes byte with stuffing (adds zero after FF code)
 (defun write-stuffed (b s)
-  (declare #.*optimize* (type fixnum b)
+  (declare #.*optimize* (type uint8 b)
            (type stream s))
    (write-byte b s)
    (if (= b #xFF)
@@ -1552,7 +1552,7 @@
                               (setf (aref buffer dpos) val))))))))
 
 ;;; Reads and decodes either whole scan or restart interval
-(defun decode-chunk (image scan s)
+(defun decode-chunk (image scan s zzbuf)
   "Reads and decodes either a whole scan (if no restarts) or restart interval"
   (let* ((nextbit (make-nextbit 0 0))
          (ncomp (scan-ncomp scan))
@@ -1603,15 +1603,6 @@
                              collecting (vector (aref (descriptor-huff-ac image) ta)
                                                 (aref (descriptor-huff-dc image) td))))
         do (loop for comp fixnum from 0 below ncomp
-	      with zzbuf = (2d-sint16-array
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0)
-			    '(0  0  0  0  0  0  0  0))
                  for pos fixnum =
                     (position (the fixnum (first (aref (scan-cdesc scan) comp)))
                               (descriptor-cid image)) ; an offset for byte positioning
@@ -1645,7 +1636,16 @@
 
 ;;; Scan decoding subroutine
 (defun decode-scan (image i s)
-  (let ((scan (aref (descriptor-scans image) i)))
+  (let ((scan (aref (descriptor-scans image) i))
+	(zzbuf (2d-sint16-array
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0)
+			    '(0  0  0  0  0  0  0  0))))
     (read-byte s) ; length
     (read-byte s)
     (loop with ncomp fixnum = (setf (scan-ncomp scan) (read-byte s))
@@ -1656,8 +1656,8 @@
     (read-byte s)
     (read-byte s)
     (if (= (descriptor-restart-interval image) 0)
-        (decode-chunk image scan s) ; reading the whole scan at once
-      (loop for term = (decode-chunk image scan s)
+        (decode-chunk image scan s zzbuf) ; reading the whole scan at once
+      (loop for term = (decode-chunk image scan s zzbuf)
             while (eq 'restart term)
             finally (return term))))) ; or in pieces
 
