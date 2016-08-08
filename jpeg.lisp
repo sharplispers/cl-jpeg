@@ -1693,20 +1693,26 @@
                 (setf (aref buffer pv) ; RED
                       (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
 
-(defun decode-frame-beginning (image s)
+(defun decode-frame-beginning (image s buffer)
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
-  (setf (descriptor-buffer image)
-        (make-array (* (setf (descriptor-height image) (read-word s)) ; height
-                       (setf (descriptor-width image) (read-word s))  ; width
-                       (setf (descriptor-ncomp image) (read-byte s))) ; number of components
-                    :element-type 'uint8
-                    :initial-element 0)))
+  (if (arrayp buffer)
+      (if (< (length array) (* (setf (descriptor-height image) (read-word s)) ; height
+			       (setf (descriptor-width image) (read-word s))  ; width
+			       (setf (descriptor-ncomp image) (read-byte s))))
+	  (error "Invalid buffer supplied: %A" buffer)
+	  (setf (descriptor-buffer image) buffer))
+      (setf (descriptor-buffer image)
+	    (make-array (* (setf (descriptor-height image) (read-word s)) ; height
+			   (setf (descriptor-width image) (read-word s))  ; width
+			   (setf (descriptor-ncomp image) (read-byte s))) ; number of components
+			:element-type 'uint8
+			:initial-element 0))))
 
 ;;; Frame decoding subroutine
-(defun decode-frame (image s)
-  (decode-frame-beginning image s)
+(defun decode-frame (image s buffer)
+  (decode-frame-beginning image s buffer)
   (loop for i fixnum from 0 below (descriptor-ncomp image)
         with hv fixnum do
         (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
@@ -1733,14 +1739,14 @@
     (when (= (descriptor-ncomp image) 3)
       (inverse-colorspace-convert image))))
 
-(defun decode-stream (stream)
+(defun decode-stream (stream buffer)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker) (decode-frame image stream)
+    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer)
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
@@ -1748,9 +1754,9 @@ progressive DCT-based JPEGs."
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
 ;;; Top level decoder function
-(defun decode-image (filename)
+(defun decode-image (filename &optional buffer)
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in)))
+    (decode-stream in buffer)))
 
 (defun decode-stream-height-width (stream)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
