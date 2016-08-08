@@ -3,7 +3,7 @@
   (:nicknames #:cl-jpeg)
   (:export #:encode-image
            #:decode-stream
-           #:decode-stream-height-width
            #:decode-image
+	   #:allocate-buffer
 	   #:jpeg-file-dimensions
            #:jpeg-to-bmp))
