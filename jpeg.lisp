@@ -1693,60 +1693,67 @@
                 (setf (aref buffer pv) ; RED
                       (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
 
-(defun decode-frame-beginning (image s buffer)
+(defun decode-frame-beginning (image s buffer &key (return-meta nil))
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
-  (if (arrayp buffer)
-      (if (< (length array) (* (setf (descriptor-height image) (read-word s)) ; height
-			       (setf (descriptor-width image) (read-word s))  ; width
-			       (setf (descriptor-ncomp image) (read-byte s))))
-	  (error "Invalid buffer supplied: %A" buffer)
-	  (setf (descriptor-buffer image) buffer))
-      (setf (descriptor-buffer image)
-	    (make-array (* (setf (descriptor-height image) (read-word s)) ; height
-			   (setf (descriptor-width image) (read-word s))  ; width
-			   (setf (descriptor-ncomp image) (read-byte s))) ; number of components
-			:element-type 'uint8
-			:initial-element 0))))
+  (if (return-meta)
+      (values (setf (descriptor-height image) (read-word s)) ; height
+	      (setf (descriptor-width image) (read-word s))  ; width
+	      (setf (descriptor-ncomp image) (read-byte s)))
+      (if (arrayp buffer)
+	  (if (< (length buffer) (* (setf (descriptor-height image) (read-word s)) ; height
+				   (setf (descriptor-width image) (read-word s)) ; width
+				   (setf (descriptor-ncomp image) (read-byte s))))
+	      (error "Invalid buffer supplied: %A" buffer)
+	      (setf (descriptor-buffer image) buffer))
+	  (setf (descriptor-buffer image)
+		(make-array (* (setf (descriptor-height image) (read-word s)) ; height
+			       (setf (descriptor-width image) (read-word s)) ; width
+			       (setf (descriptor-ncomp image) (read-byte s))) ; number of components
+			    :element-type 'uint8
+			    :initial-element 0)))))
 
 ;;; Frame decoding subroutine
-(defun decode-frame (image s buffer)
-  (decode-frame-beginning image s buffer)
-  (loop for i fixnum from 0 below (descriptor-ncomp image)
-        with hv fixnum do
-        (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
-        (setf hv (read-byte s)) ; HV
-        (setf (aref (descriptor-H image) i) (ash hv -4))
-        (setf (aref (descriptor-V image) i) (logand hv 7))
-        (setf (aref (descriptor-qdest image) i) (read-byte s)))
-  (let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
-                    collecting (list (aref (descriptor-H image) i)
-                                     (aref (descriptor-V image) i))))
-         (Hmax (loop for entry in frl maximize (first entry)))
-         (Vmax (loop for entry in frl maximize (second entry)))
-         (freqs (convert-sampling frl Hmax Vmax)))
-    (loop for entry across freqs
-          for i fixnum from 0 do
-          (setf (aref (descriptor-iH image) i) (first entry))
-          (setf (aref (descriptor-iV image) i) (second entry)))
-    (loop with term fixnum = 0
-          for j fixnum from 0
-          until (= term +M_EOI+) do
-          (when (/= (interpret-markers image term s) +M_SOS+)
-                (error "Unsupported marker in the frame header"))
-          (setf term (decode-scan image j s)))
-    (when (= (descriptor-ncomp image) 3)
-      (inverse-colorspace-convert image))))
+(defun decode-frame (image s buffer &key return-meta)
+  (if return-meta
+      (decode-frame-beginning image s buffer :return-meta return-meta)
+      (progn
+	(decode-frame-beginning image s buffer)
+	(loop for i fixnum from 0 below (descriptor-ncomp image)
+	   with hv fixnum do
+	     (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
+	     (setf hv (read-byte s))				  ; HV
+	     (setf (aref (descriptor-H image) i) (ash hv -4))
+	     (setf (aref (descriptor-V image) i) (logand hv 7))
+	     (setf (aref (descriptor-qdest image) i) (read-byte s)))
+	(let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
+		       collecting (list (aref (descriptor-H image) i)
+					(aref (descriptor-V image) i))))
+	       (Hmax (loop for entry in frl maximize (first entry)))
+	       (Vmax (loop for entry in frl maximize (second entry)))
+	       (freqs (convert-sampling frl Hmax Vmax)))
+	  (loop for entry across freqs
+	     for i fixnum from 0 do
+	       (setf (aref (descriptor-iH image) i) (first entry))
+	       (setf (aref (descriptor-iV image) i) (second entry)))
+	  (loop with term fixnum = 0
+	     for j fixnum from 0
+	     until (= term +M_EOI+) do
+	       (when (/= (interpret-markers image term s) +M_SOS+)
+		 (error "Unsupported marker in the frame header"))
+	       (setf term (decode-scan image j s)))
+	  (when (= (descriptor-ncomp image) 3)
+	    (inverse-colorspace-convert image))))))
 
-(defun decode-stream (stream buffer)
+(defun decode-stream (stream buffer &key return-meta)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer)
+    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer :return-meta return-meta)
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
@@ -1771,3 +1778,7 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
                    (descriptor-width image)))
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
+(defun jpeg-file-dimensions (filename)
+  "Return image height, width and number of components"
+  (with-open-file (in filename :direction :input :element-type 'uint8)
+    (decode-stream in buffer :return-meta t)))
