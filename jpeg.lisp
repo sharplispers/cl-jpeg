@@ -1697,7 +1697,7 @@
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
-  (if (return-meta)
+  (if return-meta
       (values (setf (descriptor-height image) (read-word s)) ; height
 	      (setf (descriptor-width image) (read-word s))  ; width
 	      (setf (descriptor-ncomp image) (read-byte s)))
@@ -1781,4 +1781,4 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components"
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in buffer :return-meta t)))
+    (decode-stream in nil :return-meta t)))
