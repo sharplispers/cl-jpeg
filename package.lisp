@@ -5,4 +5,5 @@
            #:decode-stream
            #:decode-stream-height-width
            #:decode-image
+	   #:jpeg-file-dimensions
            #:jpeg-to-bmp))
