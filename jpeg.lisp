@@ -1742,7 +1742,7 @@
 	  (when (= (descriptor-ncomp image) 3)
 	    (inverse-colorspace-convert image))))
 
-(defun decode-stream (stream buffer)
+(defun decode-stream (stream &optional buffer)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
