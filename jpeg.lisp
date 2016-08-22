@@ -1693,54 +1693,63 @@
                 (setf (aref buffer pv) ; RED
                       (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
 
-(defun decode-frame-beginning (image s)
+(defun allocate-buffer (height width ncomp)
+  (make-array (* height width ncomp) 
+	      :element-type 'uint8
+	      :initial-element 0))
+
+(defun decode-frame-beginning (image s buffer)
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
-  (setf (descriptor-buffer image)
-        (make-array (* (setf (descriptor-height image) (read-word s)) ; height
-                       (setf (descriptor-width image) (read-word s))  ; width
-                       (setf (descriptor-ncomp image) (read-byte s))) ; number of components
-                    :element-type 'uint8
-                    :initial-element 0)))
+  (if (arrayp buffer)
+	  (if (< (length buffer) (* (setf (descriptor-height image) (read-word s)) ; height
+				   (setf (descriptor-width image) (read-word s)) ; width
+				   (setf (descriptor-ncomp image) (read-byte s))))
+	      (error "Invalid buffer supplied: ~A" buffer)
+	      (setf (descriptor-buffer image) buffer))
+	  (setf (descriptor-buffer image)
+		(allocate-buffer (setf (descriptor-height image) (read-word s)) ; height
+				 (setf (descriptor-width image) (read-word s)) ; width
+				 (setf (descriptor-ncomp image) (read-byte s))))))
 
 ;;; Frame decoding subroutine
-(defun decode-frame (image s)
-  (decode-frame-beginning image s)
+(defun decode-frame (image s buffer)
+  (decode-frame-beginning image s buffer)
   (loop for i fixnum from 0 below (descriptor-ncomp image)
-        with hv fixnum do
-        (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
-        (setf hv (read-byte s)) ; HV
-        (setf (aref (descriptor-H image) i) (ash hv -4))
-        (setf (aref (descriptor-V image) i) (logand hv 7))
-        (setf (aref (descriptor-qdest image) i) (read-byte s)))
-  (let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
-                    collecting (list (aref (descriptor-H image) i)
-                                     (aref (descriptor-V image) i))))
-         (Hmax (loop for entry in frl maximize (first entry)))
-         (Vmax (loop for entry in frl maximize (second entry)))
-         (freqs (convert-sampling frl Hmax Vmax)))
-    (loop for entry across freqs
-          for i fixnum from 0 do
-          (setf (aref (descriptor-iH image) i) (first entry))
-          (setf (aref (descriptor-iV image) i) (second entry)))
-    (loop with term fixnum = 0
-          for j fixnum from 0
-          until (= term +M_EOI+) do
-          (when (/= (interpret-markers image term s) +M_SOS+)
-                (error "Unsupported marker in the frame header"))
-          (setf term (decode-scan image j s)))
-    (when (= (descriptor-ncomp image) 3)
-      (inverse-colorspace-convert image))))
+     with hv fixnum do
+       (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
+       (setf hv (read-byte s))				    ; HV
+       (setf (aref (descriptor-H image) i) (ash hv -4))
+       (setf (aref (descriptor-V image) i) (logand hv 7))
+       (setf (aref (descriptor-qdest image) i) (read-byte s)))
+	(let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
+		       collecting (list (aref (descriptor-H image) i)
+					(aref (descriptor-V image) i))))
+	       (Hmax (loop for entry in frl maximize (first entry)))
+	       (Vmax (loop for entry in frl maximize (second entry)))
+	       (freqs (convert-sampling frl Hmax Vmax)))
+	  (loop for entry across freqs
+	     for i fixnum from 0 do
+	       (setf (aref (descriptor-iH image) i) (first entry))
+	       (setf (aref (descriptor-iV image) i) (second entry)))
+	  (loop with term fixnum = 0
+	     for j fixnum from 0
+	     until (= term +M_EOI+) do
+	       (when (/= (interpret-markers image term s) +M_SOS+)
+		 (error "Unsupported marker in the frame header"))
+	       (setf term (decode-scan image j s)))
+	  (when (= (descriptor-ncomp image) 3)
+	    (inverse-colorspace-convert image))))
 
-(defun decode-stream (stream)
+(defun decode-stream (stream &optional buffer)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker) (decode-frame image stream)
+    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer)
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
@@ -1748,11 +1757,11 @@ progressive DCT-based JPEGs."
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
 ;;; Top level decoder function
-(defun decode-image (filename)
+(defun decode-image (filename &optional buffer)
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in)))
+    (decode-stream in buffer)))
 
-(defun decode-stream-height-width (stream)
+(defun decode-stream-height-width-ncomp (stream)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
@@ -1760,8 +1769,13 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
   (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
          (marker (interpret-markers image 0 stream)))
     (cond ((or (= +M_SOF0+ marker)
-               (= +M_SOF2+ marker)) (decode-frame-beginning image stream)
+               (= +M_SOF2+ marker)) (decode-frame-beginning image stream nil)
            (values (descriptor-height image)
-                   (descriptor-width image)))
+                   (descriptor-width image)
+		   (descriptor-ncomp image)))
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
+(defun jpeg-file-dimensions (filename)
+  "Return image height, width and number of components"
+  (with-open-file (in filename :direction :input :element-type 'uint8)
+    (decode-stream-height-width-ncomp in)))
