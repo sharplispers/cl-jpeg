@@ -491,7 +491,7 @@
         (yend (plus dy (1- height))))
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
-	     (type uint8-array inbuf)
+	     (type simple-array inbuf)
 	     (type (simple-array uint16-2d-array (*)) outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
