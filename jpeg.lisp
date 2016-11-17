@@ -1,5 +1,4 @@
-;;  -*- Mode: LISP; Package: (JPEG :use (common-lisp)) -*-
-;;; Generic Common Lisp JPEG encoder/decoder implementation
+;;; ANSI Common Lisp (mostly) baseline JPEG encoder/decoder implementation
 ;;; Copyright [c] 1999,2015,2016 Eugene Zaikonnikov <eugene@funcall.org>
 ;;;               
 ;;; This software is distributed under the terms of BSD-like license
@@ -83,6 +82,10 @@
 (deftype sint16-array () '(simple-array sint16 (*)))
 (deftype sint16-2d-array () '(simple-array sint16-array (*)))
 
+(deftype uint16 () '(unsigned-byte 16))
+(deftype uint16-array () '(simple-array uint16 (*)))
+(deftype uint16-2d-array () '(simple-array uint16-array (*)))
+
 (deftype fixnum-array () '(simple-array fixnum (*)))
 (deftype fixnum-2d-array () '(simple-array fixnum-array (*)))
 
@@ -96,6 +99,9 @@
 
 (defmacro s16ref (data x y)
   `(the sint16 (aref (the sint16-array (aref (the sint16-2d-array ,data) ,y)) ,x)))
+
+(defmacro u16ref (data x y)
+  `(the uint16 (aref (the uint16-array (aref (the uint16-2d-array ,data) ,y)) ,x)))
 
 (defmacro fixref (data x y)
   `(the fixnum (aref (the fixnum-array (aref (the fixnum-2d-array ,data) ,y)) ,x)))
@@ -485,8 +491,8 @@
         (yend (plus dy (1- height))))
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
-	     (type uint8-array inbuf)
-	     (type (simple-array uint8-2d-array (*)) outbuf))
+	     (type simple-array inbuf)
+	     (type (simple-array uint16-2d-array (*)) outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -496,7 +502,7 @@
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
                 (loop for i fixnum from 0 below ncomp do
-                      (setf (u8ref (aref outbuf i) cx cy)
+                      (setf (u16ref (aref outbuf i) cx cy)
                             (minus (aref inbuf (plus pos i)) 128)))))
     (values xend yend)))
 
