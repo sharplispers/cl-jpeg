@@ -17,6 +17,6 @@
 (defun test-encode-grayscale (&optional (output #P"/tmp/gray.jpg"))
   (let ((width 32)
         (height 32))
-    (let ((buf (make-array (* width height) :initial-element 42 :element-type 'jpeg::uint8)))
+    (let ((buf (make-array (* width height) :initial-element 42)))
       (time (jpeg:encode-image output buf 1 width height
                           :q-tabs *gray-q-tabs*)))))
