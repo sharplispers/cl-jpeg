@@ -1744,9 +1744,7 @@
 	     until (= term +M_EOI+) do
 	       (when (/= (interpret-markers image term s) +M_SOS+)
 		 (error "Unsupported marker in the frame header"))
-	       (setf term (decode-scan image j s)))
-	  (when (= (descriptor-ncomp image) 3)
-	    (inverse-colorspace-convert image))))
+	       (setf term (decode-scan image j s)))))
 
 (defun decode-stream (stream &optional buffer)
   "Return image array, height, width, and number of components. Does not support
@@ -1755,7 +1753,10 @@ progressive DCT-based JPEGs."
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer)
+    (cond ((= +M_SOF0+ marker)
+           (decode-frame image stream buffer)
+           (when (= (descriptor-ncomp image) 3)
+             (inverse-colorspace-convert image))
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
