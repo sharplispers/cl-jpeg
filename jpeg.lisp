@@ -307,18 +307,19 @@
 ;;; Quantization performance test, each branch quantizes 30000 random matrixes
 (eval-when (:compile-toplevel)
 
+  (defconstant +quantize-calibration-loops+ 30000)
+  
   (format t "Performing compile-time optimization.. please wait.~%")
   (finish-output)
-  
-  (defvar *quantize-optimization*
-    (<= (let ((time1 (get-internal-run-time)))
-	  (loop for i fixnum from 1 to 30000 do
+
+  (defun qat1 ()
+    (loop for i fixnum from 1 to +quantize-calibration-loops+ do
 		(loop for row across +q-luminance+ do
 		      (loop for q-coef fixnum across row
-			    maximize (round (random 128) q-coef))))
-	  (minus (get-internal-run-time) time1))
-	(let ((time1 (get-internal-run-time)))
-	  (loop for i fixnum from 1 to 30000 do
+			    maximize (round (random 128) q-coef)))))
+
+  (defun qat2 ()
+    (loop for i fixnum from 1 to +quantize-calibration-loops+ do
 		(loop for q-row across +q-luminance+ do
 		      (loop for val fixnum = (random 128)
 			    for absval fixnum = (abs val)
@@ -339,7 +340,17 @@
 					 -2
 				       2)))
 				  (t
-				   (round val qc))))))
+				   (round val qc)))))))
+
+  (compile 'qat1)
+  (compile 'qat2)
+  
+  (defvar *quantize-optimization*
+    (<= (let ((time1 (get-internal-run-time)))
+	  (qat1)
+	  (minus (get-internal-run-time) time1))
+	(let ((time1 (get-internal-run-time)))
+	  (qat2)
 	  (minus (get-internal-run-time) time1))))
   (format t "Done.~%")
   (finish-output))
