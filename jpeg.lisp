@@ -1719,16 +1719,19 @@
   (read-byte s) ; length
   (read-byte s)
   (read-byte s) ; sample precision
-  (if (arrayp buffer)
-	  (if (< (length buffer) (* (setf (descriptor-height image) (read-word s)) ; height
-				   (setf (descriptor-width image) (read-word s)) ; width
-				   (setf (descriptor-ncomp image) (read-byte s))))
-	      (error "Invalid buffer supplied: ~A" buffer)
-	      (setf (descriptor-buffer image) buffer))
-	  (setf (descriptor-buffer image)
-		(allocate-buffer (setf (descriptor-height image) (read-word s)) ; height
-				 (setf (descriptor-width image) (read-word s)) ; width
-				 (setf (descriptor-ncomp image) (read-byte s))))))
+  (let ((height (read-word s))
+        (width (read-word s))
+        (ncomp (read-byte s)))
+    (if (arrayp buffer)
+        (if (< (length buffer) (* (setf (descriptor-height image) height)
+                                  (setf (descriptor-width image) width)
+                                  (setf (descriptor-ncomp image) ncomp)))
+            (error "Invalid buffer supplied: ~A" buffer)
+            (setf (descriptor-buffer image) buffer))
+        (setf (descriptor-buffer image)
+              (allocate-buffer (setf (descriptor-height image) height)
+                               (setf (descriptor-width image) width)
+                               (setf (descriptor-ncomp image) ncomp))))))
 
 ;;; Frame decoding subroutine
 (defun decode-frame (image s buffer)
@@ -1755,9 +1758,7 @@
 	     until (= term +M_EOI+) do
 	       (when (/= (interpret-markers image term s) +M_SOS+)
 		 (error "Unsupported marker in the frame header"))
-	       (setf term (decode-scan image j s)))
-	  (when (= (descriptor-ncomp image) 3)
-	    (inverse-colorspace-convert image))))
+	       (setf term (decode-scan image j s)))))
 
 (defun decode-stream (stream &optional buffer)
   "Return image array, height, width, and number of components. Does not support
@@ -1766,7 +1767,10 @@ progressive DCT-based JPEGs."
     (error "Unrecognized JPEG format"))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker) (decode-frame image stream buffer)
+    (cond ((= +M_SOF0+ marker)
+           (decode-frame image stream buffer)
+           (when (= (descriptor-ncomp image) 3)
+             (inverse-colorspace-convert image))
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
