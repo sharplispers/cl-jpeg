@@ -1760,7 +1760,7 @@
 		 (error "Unsupported marker in the frame header"))
 	       (setf term (decode-scan image j s)))))
 
-(defun decode-stream (stream &optional buffer)
+(defun decode-stream (stream &optional buffer &key colorspace-conversion)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
@@ -1769,7 +1769,7 @@ progressive DCT-based JPEGs."
          (marker (interpret-markers image 0 stream)))
     (cond ((= +M_SOF0+ marker)
            (decode-frame image stream buffer)
-           (when (= (descriptor-ncomp image) 3)
+           (when (and colorspace-conversion (= (descriptor-ncomp image) 3))
              (inverse-colorspace-convert image))
            (values (descriptor-buffer image)
                    (descriptor-height image)
@@ -1778,9 +1778,9 @@ progressive DCT-based JPEGs."
           (t (error "Unsupported JPEG format: ~A" marker)))))
 
 ;;; Top level decoder function
-(defun decode-image (filename &optional buffer)
+(defun decode-image (filename &optional buffer &key (colorspace-conversion t))
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in buffer)))
+    (decode-stream in buffer :colorspace-conversion colorspace-conversion)))
 
 (defun decode-stream-height-width-ncomp (stream)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
