@@ -1868,7 +1868,7 @@ progressive DCT-based JPEGs."
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
-    (error "Unrecognized JPEG format"))
+    (error 'unrecognized-file-format))
   (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
          (marker (interpret-markers image 0 stream)))
     (cond ((or (= +M_SOF0+ marker)
