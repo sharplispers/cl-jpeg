@@ -1,0 +1,6 @@
+2017-01-10  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Added :colorspace-conversion flag to DECODE-IMAGE to produce undecoded YUV colorspace 
+
+	* Added specific conditions for error handling
+
