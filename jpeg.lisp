@@ -1794,7 +1794,7 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
            (values (descriptor-height image)
                    (descriptor-width image)
 		   (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format: ~A" marker)))))
+          (t (error "Unsupported JPEG format: ~X" marker)))))
 
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components"
