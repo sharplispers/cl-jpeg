@@ -1775,7 +1775,7 @@ progressive DCT-based JPEGs."
                    (descriptor-height image)
                    (descriptor-width image)
                    (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format: ~A" marker)))))
+          (t (error "Unsupported JPEG format: ~X" marker)))))
 
 ;;; Top level decoder function
 (defun decode-image (filename &optional buffer &key (colorspace-conversion t))
