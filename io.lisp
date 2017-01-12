@@ -48,7 +48,7 @@
           (1
            (loop :for y :from (1- h) :downto 0 :do
                  (loop :for x :from (1- w) :downto 0 :do
-                       (let ((grey (svref rgb (+ x (* y w)))))
+                       (let ((grey (aref rgb (+ x (* y w)))))
                          (write-byte grey o)
                          (write-byte grey o)
                          (write-byte grey o)))
@@ -58,9 +58,9 @@
            (loop for y fixnum from (1- h) downto 0
                  for ypos fixnum = (* y 3 w) do
                  (loop for x fixnum from ypos to (plus ypos (* (1- w) 3)) by 3 do
-                       (write-byte (the unsigned-byte (svref rgb x)) o)
-                       (write-byte (the unsigned-byte (svref rgb (1+ x))) o)
-                       (write-byte (the unsigned-byte (svref rgb (plus 2 x))) o))
+                       (write-byte (the unsigned-byte (aref rgb x)) o)
+                       (write-byte (the unsigned-byte (aref rgb (1+ x))) o)
+                       (write-byte (the unsigned-byte (aref rgb (plus 2 x))) o))
                  (loop for i fixnum from 0 below compl do ; adjusting to double-word
                        (write-byte 0 o)))))))))
 
