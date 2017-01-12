@@ -25,10 +25,12 @@
 ;;; :q-factor - quality specifier (1-64), default is 64
 ;;; Returns nothing of practical use
 ;;;
-;;; (decode-image filename)
+;;; (decode-image filename &key buffer (colorspace-conversion t))
 ;;; filename - jpeg file name
 ;;; Returns (multiple-valued) IMAGE array in the same format as encoder source image,
 ;;; image HEIGHT and image WIDTH
+;;; A pre-allocated BUFFER can be specified (see JPEG:ALLOCATE-BUFFER).
+;;; If :colorspace-conversion is NIL, no conversion from YUV space is performed.
 ;;;
 ;;; For those impatient additional function defined:
 ;;; (jpeg-to-bmp &key infile outfile)
