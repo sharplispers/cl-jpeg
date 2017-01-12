@@ -1864,7 +1864,7 @@ progressive DCT-based JPEGs."
 ;;; Top level decoder function
 (defun decode-image (filename &key buffer (colorspace-conversion t))
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in buffer :colorspace-conversion colorspace-conversion)))
+    (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion)))
 
 (defun decode-stream-height-width-ncomp (stream)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
