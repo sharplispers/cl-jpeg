@@ -1842,7 +1842,7 @@
 		 (error 'unsupported-jpeg-frame-marker))
 	       (setf term (decode-scan image j s)))))
 
-(defun decode-stream (stream &optional buffer &key colorspace-conversion)
+(defun decode-stream (stream &key buffer colorspace-conversion)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
@@ -1860,7 +1860,7 @@ progressive DCT-based JPEGs."
           (t (error 'unsupported-jpeg-format :code marker)))))
 
 ;;; Top level decoder function
-(defun decode-image (filename &optional buffer &key (colorspace-conversion t))
+(defun decode-image (filename &key buffer (colorspace-conversion t))
   (with-open-file (in filename :direction :input :element-type 'uint8)
     (decode-stream in buffer :colorspace-conversion colorspace-conversion)))
 
