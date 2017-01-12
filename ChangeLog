@@ -1,3 +1,7 @@
+2017-01-12  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Fixed SVREF to AREF in BMP converter
+
 2017-01-10  Eugene Zaikonnikov  <eugene@funcall.org>
 
 	* Added :colorspace-conversion flag to DECODE-IMAGE to produce undecoded YUV colorspace
