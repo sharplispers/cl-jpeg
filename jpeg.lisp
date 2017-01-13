@@ -25,10 +25,12 @@
 ;;; :q-factor - quality specifier (1-64), default is 64
 ;;; Returns nothing of practical use
 ;;;
-;;; (decode-image filename)
+;;; (decode-image filename &key buffer (colorspace-conversion t))
 ;;; filename - jpeg file name
 ;;; Returns (multiple-valued) IMAGE array in the same format as encoder source image,
 ;;; image HEIGHT and image WIDTH
+;;; A pre-allocated BUFFER can be specified (see JPEG:ALLOCATE-BUFFER).
+;;; If :colorspace-conversion is NIL, no conversion from YUV space is performed.
 ;;;
 ;;; For those impatient additional function defined:
 ;;; (jpeg-to-bmp &key infile outfile)
@@ -463,6 +465,88 @@
       (setf (aref *idct-limit-array* i) 255))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Error conditions
+
+(define-condition jpeg-error (error)
+  ())
+
+(define-condition jpeg-encoder-error (jpeg-error)
+  ())
+
+(define-condition internal-jpeg-encoder-error (jpeg-encoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Internal error"))))
+
+(define-condition illegal-number-of-components (jpeg-encoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Illegal number of components specified"))))
+
+(define-condition invalid-sampling-list (jpeg-encoder-error)
+  ((components :reader components :initarg :ncomp))
+  (:report (lambda (condition stream)
+	     (format stream "Wrong sampling list for ~D component(s)" (components condition)))))
+
+(define-condition invalid-quantization-tables (jpeg-encoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Too many quantization tables specified"))))
+
+(define-condition invalid-q-factor (jpeg-encoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Invalid Q factor!"))))
+
+(define-condition invalid-sampling (jpeg-encoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Invalid sampling specification!"))))
+
+(define-condition jpeg-decoder-error (jpeg-error)
+  ())
+
+(define-condition unsupported-jpeg-frame-marker (jpeg-decoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Unsupported marker in the frame header"))))
+
+(define-condition unsupported-jpeg-format (jpeg-decoder-error) 
+  ((code :reader marker-code :initarg :code))
+  (:report (lambda (condition stream)
+	     (format stream "Unsupported JPEG format: ~X" (marker-code condition)))))
+
+(define-condition unrecognized-file-format (jpeg-decoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Unrecognized JPEG format"))))
+
+(define-condition invalid-buffer-supplied (jpeg-decoder-error)
+  ((buffer :reader buffer :initarg :buffer))
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Invalid buffer supplied: ~A" (buffer condition)))))
+
+(define-condition unsupported-arithmetic-encoding (jpeg-decoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "Arithmetic encoding not supported"))))
+
+(define-condition unsupported-dnl-marker (jpeg-decoder-error)
+  ()
+  (:report (lambda (condition stream)
+	     (declare (ignorable condition))
+	     (format stream "DNL marker is not supported"))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Encoder part
 
 ;;; Subsamples inbuf into outbuf
@@ -488,7 +572,7 @@
                                                   ((> y ylim)
                                                    (s16ref inbuf x ylim))
                                                   (t
-                                                   (error "Internal error"))
+                                                   (error 'internal-jpeg-encoder-error))
                                                    ))))))))
 
 ;;; Returns sum of Vi*Hi
@@ -1006,18 +1090,18 @@
                 (1 #(0))
                 (2 #(0 1))
                 (4 #(0 1 2 3))
-                (otherwise (error "Illegal number of components specified")))))
+                (otherwise (error 'illegal-number-of-components)))))
     (declare (special *zz-result* *prev-byte* *prev-length*)
 	     (type (simple-array sint16-2d-array (*)) YUV sampled-buf)
 	     (type fixnum *prev-length* *prev-byte*))
     (cond ((/= ncomp (length sampling))
-           (error "Wrong sampling list for ~D component(s)" ncomp))
+           (error 'invalid-sampling-list :ncomp ncomp))
           ((> (length q-tabs) ncomp)
-           (error "Too many quantization tables specified"))
+           (error 'invalid-quantization-tables))
           ((zerop q-factor)
-           (error "Q-factor should be nonzero!"))
+           (error 'invalid-q-factor))
           ((> (count-relation sampling) 10)
-           (error "Invalid sampling specification!")))
+           (error 'invalid-sampling)))
     (when (< q-factor 64)
       (let ((q-tabs2 (make-array (length q-tabs)
 				 :element-type 'uint8-2d-array
@@ -1286,7 +1370,7 @@
         (setf term 0)
         (cond ((= #xe0 (logand #xf0 mk)) ; APPn marker
                (read-app s))
-              (t (cond ((= mk +M_DAC+) (error "Arithmetic encoding not supported"))
+              (t (cond ((= mk +M_DAC+) (error 'unsupported-arithmetic-encoding))
                        ((= mk +M_DRI+) (read-dri image s))
                        ((= mk +M_DHT+) (read-dht image s))
                        ((= mk +M_DQT+) (read-dqt image s))
@@ -1320,7 +1404,7 @@
                     ((<= +M_RST0+ b2 +M_RST7+)
                      (throw 'marker 'restart))
                     ((= b2 +M_DNL+)
-                     (error "DNL marker is not supported"))
+                     (error 'unsupported-dnl-marker))
                     (t (throw 'marker b2))))))
         (decf cnt)
         (setf bit (ash (logand b 255) -7))
@@ -1726,7 +1810,7 @@
         (if (< (length buffer) (* (setf (descriptor-height image) height)
                                   (setf (descriptor-width image) width)
                                   (setf (descriptor-ncomp image) ncomp)))
-            (error "Invalid buffer supplied: ~A" buffer)
+            (error 'invalid-buffer-supplied :buffer buffer)
             (setf (descriptor-buffer image) buffer))
         (setf (descriptor-buffer image)
               (allocate-buffer (setf (descriptor-height image) height)
@@ -1757,36 +1841,36 @@
 	     for j fixnum from 0
 	     until (= term +M_EOI+) do
 	       (when (/= (interpret-markers image term s) +M_SOS+)
-		 (error "Unsupported marker in the frame header"))
+		 (error 'unsupported-jpeg-frame-marker))
 	       (setf term (decode-scan image j s)))))
 
-(defun decode-stream (stream &optional buffer)
+(defun decode-stream (stream &key buffer colorspace-conversion)
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
-    (error "Unrecognized JPEG format"))
+    (error 'unrecognized-file-format))
   (let* ((image (make-descriptor))
          (marker (interpret-markers image 0 stream)))
     (cond ((= +M_SOF0+ marker)
            (decode-frame image stream buffer)
-           (when (= (descriptor-ncomp image) 3)
+           (when (and colorspace-conversion (= (descriptor-ncomp image) 3))
              (inverse-colorspace-convert image))
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
                    (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format: ~A" marker)))))
+          (t (error 'unsupported-jpeg-format :code marker)))))
 
 ;;; Top level decoder function
-(defun decode-image (filename &optional buffer)
+(defun decode-image (filename &key buffer (colorspace-conversion t))
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in buffer)))
+    (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion)))
 
 (defun decode-stream-height-width-ncomp (stream)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
-    (error "Unrecognized JPEG format"))
+    (error 'unrecognized-file-format))
   (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
          (marker (interpret-markers image 0 stream)))
     (cond ((or (= +M_SOF0+ marker)
@@ -1794,7 +1878,7 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
            (values (descriptor-height image)
                    (descriptor-width image)
 		   (descriptor-ncomp image)))
-          (t (error "Unsupported JPEG format: ~A" marker)))))
+          (t (error 'unsupported-jpeg-format :code marker)))))
 
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components"
