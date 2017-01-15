@@ -1,5 +1,5 @@
 ;;; ANSI Common Lisp (mostly) baseline JPEG encoder/decoder implementation
-;;; Copyright [c] 1999,2015,2016 Eugene Zaikonnikov <eugene@funcall.org>
+;;; Copyright [c] 1999,2015-2017 Eugene Zaikonnikov <eugene@funcall.org>
 ;;;               
 ;;; This software is distributed under the terms of BSD-like license
 ;;; [see LICENSE for details]
@@ -262,6 +262,7 @@
 (defconstant +M_DRI+ #xdd)
 (defconstant +M_DAC+ #xcc)
 (defconstant +M_APP0+ #xe0)
+(defconstant +M_APP14+ #xee)
 
 ;;; Default quantization tables
 (define-constant +q-luminance+
@@ -303,6 +304,8 @@
                   '(62 62 62 62 62 62 62 62)
                   '(62 62 62 62 62 62 62 62)
                   '(62 62 62 62 62 62 62 62)))
+
+(defconstant +max-sample+ 255)
 
 )
 
@@ -1239,7 +1242,8 @@
   (iV (make-array 4) :type (simple-array t (*)))
   (qdest (make-array 4) :type (simple-array t (*)))
   (zz (make-array 64 :element-type 'sint16) :type sint16-array)
-  (ncomp 0 :type fixnum))
+  (ncomp 0 :type fixnum)
+  (adobe-app14-transform nil))
 
 ;;; Reads an JPEG marker from the stream
 (defun read-marker (s)
@@ -1362,20 +1366,34 @@
             (setf (huffstruct-valptr tables) valptr))
           (unless (< count len) (return t)))))
 
+;;; APP14 is assumed to be Adobe proprietary extension marker
+;;; We parse it to figure out if some special color transform is necessary
+(defun read-app14 (image s)
+  (let ((length (minus (read-word s) 2)))
+    (loop repeat 11 do (read-byte s))
+    (setf (descriptor-adobe-app14-transform image)
+	  (case (read-byte s)
+	    (0 :unknown)
+	    (1 :ycbcr-rgb)
+	    (2 :ycck-cmyk)
+	    (otherwise :invalid)))
+    (loop repeat (- length 12) do (read-byte s))))
+
 ;;; Reads tables etc., returns the first unrecognized marker it met
 (defun interpret-markers (image term s)
   "Reads tables etc., returns the first unrecognized marker it met"
   (loop for mk fixnum = (cond ((zerop term) (read-marker s))
                               (t term)) do
-        (setf term 0)
-        (cond ((= #xe0 (logand #xf0 mk)) ; APPn marker
-               (read-app s))
-              (t (cond ((= mk +M_DAC+) (error 'unsupported-arithmetic-encoding))
-                       ((= mk +M_DRI+) (read-dri image s))
-                       ((= mk +M_DHT+) (read-dht image s))
-                       ((= mk +M_DQT+) (read-dqt image s))
-                       ((= mk +M_COM+) (read-com s))
-                       (t (return mk)))))))
+       (setf term 0)
+       (cond ((= mk +M_APP14+) (read-app14 image s)) ;Adobe marker
+	     ((= #xe0 (logand #xf0 mk)) ; Unrecognized APPn marker
+	      (read-app s))
+	     (t (cond ((= mk +M_DAC+) (error 'unsupported-arithmetic-encoding))
+		      ((= mk +M_DRI+) (read-dri image s))
+		      ((= mk +M_DHT+) (read-dht image s))
+		      ((= mk +M_DQT+) (read-dqt image s))
+		      ((= mk +M_COM+) (read-com s))		      
+		      (t (return mk)))))))
 
 ;;; EXTEND procedure, as described in the standard
 (defun extend (v tt)
@@ -1794,6 +1812,32 @@
                 (setf (aref buffer pv) ; RED
                       (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
 
+(defun ycck-cmyk-convert (image)
+  (let* ((buffer (descriptor-buffer image))
+         (nw (mul (descriptor-width image) 4)))
+    (declare #.*optimize*
+	     (type (simple-array uint8 (*)) buffer)
+             (type fixnum nw))
+    (loop for y fixnum from 0 below (descriptor-height image)
+       for yp fixnum from 0 by nw do
+	 (loop for x fixnum from 0 below (descriptor-width image)
+	    for py fixnum from yp by 4
+	    for pu fixnum = (1+ py)
+	    for pv fixnum = (plus py 2)
+	    for yy fixnum = (aref buffer py)
+	    for cb fixnum = (aref buffer pu)
+	    for cr fixnum = (aref buffer pv) do
+	      (setf (aref buffer pv)	; BLUE
+		    (the uint8 (limit (minus +max-sample+ (plus yy (aref *cb-b-tab* cb))))))
+	      (setf (aref buffer pu)	; GREEN
+		    (the uint8 (limit (minus +max-sample+
+					     (plus yy (ash (plus
+							    (aref *cb-g-tab* cb)
+							    (aref *cr-g-tab* cr))
+							   (- shift)))))))
+	      (setf (aref buffer py)	; RED
+		    (the uint8 (limit (minus +max-sample+ (plus yy (aref *cr-r-tab* cr))))))))))
+
 (defun allocate-buffer (height width ncomp)
   (make-array (* height width ncomp) 
 	      :element-type 'uint8
@@ -1853,8 +1897,13 @@ progressive DCT-based JPEGs."
          (marker (interpret-markers image 0 stream)))
     (cond ((= +M_SOF0+ marker)
            (decode-frame image stream buffer)
-           (when (and colorspace-conversion (= (descriptor-ncomp image) 3))
-             (inverse-colorspace-convert image))
+           (when colorspace-conversion
+	     (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
+		    (inverse-colorspace-convert image))
+		   ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
+		    (ycck-cmyk-convert image))
+		   ((= (descriptor-ncomp image) 3)
+		    (inverse-colorspace-convert image))))
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
