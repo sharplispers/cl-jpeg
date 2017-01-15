@@ -1844,7 +1844,7 @@
 		 (error 'unsupported-jpeg-frame-marker))
 	       (setf term (decode-scan image j s)))))
 
-(defun decode-stream (stream &key buffer colorspace-conversion)
+(defun decode-stream (stream &key buffer (colorspace-conversion t))
   "Return image array, height, width, and number of components. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
