@@ -1838,9 +1838,9 @@
 	      (setf (aref buffer py)	; RED
 		    (the uint8 (limit (minus +max-sample+ (plus yy (aref *cr-r-tab* cr))))))))))
 
-(defun convert-cmyk-to-rgb (buffer h w &key output)
-  (unless output
-    (setf output (make-array (* h w 3) :element-type 'uint8)))
+(defun convert-cmyk-to-rgb (buffer h w &key rgb-buffer)
+  (unless rgb-buffer
+    (setf rgb-buffer (make-array (* h w 3) :element-type 'uint8)))
   (loop for y fixnum from 0 below h
      for yrgb fixnum from 0 by (* w 3)
      for yp fixnum from 0 by (* w 4) do
@@ -1855,10 +1855,10 @@
 	  for magenta fixnum = (aref buffer pu)
 	  for yellow fixnum = (aref buffer pv)
 	  for black fixnum = (aref buffer (1+ pv)) do
-	    (setf (aref output pr) (round (mul cyan black) 255)
-		  (aref output pg) (round (mul magenta black) 255)
-		  (aref output pb) (round (mul yellow black) 255))))
-  output)
+	    (setf (aref rgb-buffer pr) (round (mul cyan black) 255)
+		  (aref rgb-buffer pg) (round (mul magenta black) 255)
+		  (aref rgb-buffer pb) (round (mul yellow black) 255))))
+  rgb-buffer)
 
 (defun allocate-buffer (height width ncomp)
   (make-array (* height width ncomp) 
