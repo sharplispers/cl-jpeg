@@ -1911,7 +1911,7 @@
 	       (setf term (decode-scan image j s)))))
 
 (defun decode-stream (stream &key buffer (colorspace-conversion t))
-  "Return image array, height, width, and number of components. Does not support
+  "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error 'unrecognized-file-format))
@@ -1929,7 +1929,8 @@ progressive DCT-based JPEGs."
            (values (descriptor-buffer image)
                    (descriptor-height image)
                    (descriptor-width image)
-                   (descriptor-ncomp image)))
+                   (descriptor-ncomp image)
+		   (descriptor-adobe-app14-transform image)))
           (t (error 'unsupported-jpeg-format :code marker)))))
 
 ;;; Top level decoder function
@@ -1948,10 +1949,11 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
                (= +M_SOF2+ marker)) (decode-frame-beginning image stream nil)
            (values (descriptor-height image)
                    (descriptor-width image)
-		   (descriptor-ncomp image)))
+		   (descriptor-ncomp image)
+		   (descriptor-adobe-app14-transform image)))
           (t (error 'unsupported-jpeg-format :code marker)))))
 
 (defun jpeg-file-dimensions (filename)
-  "Return image height, width and number of components"
+  "Return image height, width and number of components, plus the type of Adobe colorpsace transform"
   (with-open-file (in filename :direction :input :element-type 'uint8)
     (decode-stream-height-width-ncomp in)))
