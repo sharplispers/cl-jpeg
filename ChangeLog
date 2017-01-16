@@ -1,3 +1,7 @@
+2017-01-16  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Extended decoder and probe functions to return APP14 color transform type
+
 2017-01-15  Eugene Zaikonnikov  <eugene@funcall.org>
 
 	* Added convenicence CONVERT-CMYK-TO-RGB function
