@@ -5,6 +5,7 @@
            #:decode-stream
            #:decode-image
 	   #:jpeg-error #:jpeg-encoder-error #:jpeg-decoder-error #:unsupported-jpeg-format #:unrecognized-file-format
+	   #:convert-cmyk-to-rgb
 	   #:allocate-buffer
 	   #:jpeg-file-dimensions
            #:jpeg-to-bmp))

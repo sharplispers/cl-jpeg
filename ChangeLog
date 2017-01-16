@@ -1,3 +1,11 @@
+2017-01-15  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Added convenicence CONVERT-CMYK-TO-RGB function
+
+	* Added basic Adobe APP14 marker transform handling
+
+	* Added CMYK image support
+
 2017-01-12  Eugene Zaikonnikov  <eugene@funcall.org>
 
 	* Changed BUFFER to &key argument from &optional in DECODE-STREAM and DECODE-IMAGE
