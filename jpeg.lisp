@@ -808,31 +808,27 @@
     (declare #.*optimize* (type fixnum n))
     (aref +csize+ (plus n 1023)))
 
-(defvar *zz-result* (make-array 64 :element-type 'sint16))
-(declaim (type sint16-array *zz-result*))
-
 ;;; zigzag ordering
-(defun zigzag (buffer)
+(defun zigzag (buffer zz-result)
   (declare #.*optimize*
 	   (type sint16-2d-array buffer))
   (loop for row of-type sint16-array across buffer
      for z-row of-type uint8-array across +zigzag-index+ do
        (loop for x fixnum from 0 to 7 do
-	    (setf (aref *zz-result* (aref z-row x))
+	    (setf (aref zz-result (aref z-row x))
 		  (the sint16 (aref row x)))))
-  *zz-result*)
+  zz-result)
 
-(defun zigzag8 (buffer)
-  (let ((zz-result (make-array 64 :element-type 'uint8)))
-    (declare #.*optimize*
-	     (type uint8-2d-array buffer)
-	     (type uint8-array zz-result))
-    (loop for row of-type uint8-array across buffer
-       for z-row of-type uint8-array across +zigzag-index+ do
-	 (loop for x fixnum from 0 to 7 do
-	      (setf (aref zz-result (aref z-row x))
-		    (the fixnum (aref row x)))))
-    zz-result))
+(defun zigzag8 (buffer zz-result)
+  (declare #.*optimize*
+           (type uint8-2d-array buffer)
+           (type uint8-array zz-result))
+  (loop for row of-type uint8-array across buffer
+     for z-row of-type uint8-array across +zigzag-index+ do
+       (loop for x fixnum from 0 to 7 do
+            (setf (aref zz-result (aref z-row x))
+                  (the fixnum (aref row x)))))
+  zz-result)
 
 ;;; Writes frame header
 (defun write-frame-header (maxX maxY cn q-tables sampling tqv out-stream)
@@ -950,14 +946,15 @@
 
 ;;; Emits q-tables
 (defun write-quantization-tables (tables s)
-  (let ((len (plus 2 (mul 65 (length tables)))))
+  (let ((len (plus 2 (mul 65 (length tables))))
+        (zz-result (make-array 64 :element-type 'uint8)))
     (write-marker +M_DQT+ s)
     (write-byte (ash len -8) s) ; MSB
     (write-byte (logand len #xff) s) ; LSB
     (loop for table across tables
           for i fixnum from 0 do
           (write-byte i s)
-          (write-sequence (zigzag8 table) s))))
+          (write-sequence (zigzag8 table zz-result) s))))
 
 ;;; Emits huffman tables in the following order:
 ;;; luminance DC
@@ -1069,7 +1066,7 @@
     (setq sampling '((1 1))))
   (let* ((wd (loop for entry in sampling maximize (the fixnum (first entry))))
          (ht (loop for entry in sampling maximize (the fixnum (second entry))))
-	 (*zz-result* (make-array 64 :element-type 'sint16))
+	 (zz-result (make-array 64 :element-type 'sint16))
 	 (*prev-byte* 0) ; State variables for write-bits
 	 (*prev-length* 0)
          (isampling (convert-sampling sampling wd ht))
@@ -1182,7 +1179,7 @@
                                                 (plus x ypos)) do
                            (crunch sampled-buf pos q-tab)
                            (setf (aref preds cn)
-                                 (encode-block (zigzag (aref sampled-buf pos))
+                                 (encode-block (zigzag (aref sampled-buf pos) zz-result)
                                                hufftabs (aref preds cn) out-stream)))))))))
     (unless (zerop *prev-length*)
       (write-stuffed (deposit-field #xff ; byte padding & flushing
