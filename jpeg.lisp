@@ -808,11 +808,13 @@
     (declare #.*optimize* (type fixnum n))
     (aref +csize+ (plus n 1023)))
 
+(defvar *zz-result* (make-array 64 :element-type 'sint16))
+(declaim (type sint16-array *zz-result*))
+
 ;;; zigzag ordering
 (defun zigzag (buffer)
   (declare #.*optimize*
-	   (type sint16-2d-array buffer)
-	   (type sint16-array *zz-result*))
+	   (type sint16-2d-array buffer))
   (loop for row of-type sint16-array across buffer
      for z-row of-type uint8-array across +zigzag-index+ do
        (loop for x fixnum from 0 to 7 do
@@ -870,11 +872,15 @@
 ;;; NB: probably it's a good idea to encapsulate this behavior into a class, but I'm
 ;;; afraid that method dispatch would be too slow
 
+(defvar *prev-byte* 0)
+(declaim (type uint8 *prev-byte*))
+
+(defvar *prev-length* 0)
+(declaim (type fixnum *prev-length* *prev-length*))
+
 (defun write-bits (bi ni s)
   (declare #.*optimize*
-           ;(special *prev-length* *prev-byte*)
-           (type fixnum bi ni *prev-legnth*)
-	   (type uint8 *prev-byte*)
+           (type fixnum bi ni)
            (type stream s))
   (loop with lim fixnum = (if (> ni 8) 1 0)
         for i fixnum from lim downto 0 do
@@ -1094,9 +1100,7 @@
                 (2 #(0 1))
                 (4 #(0 1 2 3))
                 (otherwise (error 'illegal-number-of-components)))))
-    (declare (special *zz-result* *prev-byte* *prev-length*)
-	     (type (simple-array sint16-2d-array (*)) YUV sampled-buf)
-	     (type fixnum *prev-length* *prev-byte*))
+    (declare (type (simple-array sint16-2d-array (*)) YUV sampled-buf))
     (cond ((/= ncomp (length sampling))
            (error 'invalid-sampling-list :ncomp ncomp))
           ((> (length q-tabs) ncomp)
@@ -1511,6 +1515,17 @@
 (defmacro dct-limit (n)
   `(aref *idct-limit-array* (logand (plus ,n 255) 511)))
 
+(defvar *ws* (2d-sint16-array
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)
+		'(0  0  0  0  0  0  0  0)))
+(declaim (type sint16-2d-array *ws*))
+
 ;;; Inverse LLM DCT and dequantization
 (defun inverse-llm-dct (block q-table)
   "Performs Inverse LMM DCT and dequantization"
@@ -1520,7 +1535,7 @@
         (dcval 0))
     (declare #.*optimize*
              (type fixnum tmp0 tmp1 tmp2 tmp3 tmp10 tmp11 tmp12 tmp13 z1 z2 z3 z4 z5 dcval)
-             (type sint16-2d-array block *ws*)
+             (type sint16-2d-array block)
              (dynamic-extent tmp0 tmp1 tmp2 tmp3 tmp10 tmp11 tmp12 tmp13 z1 z2 z3 z4 z5 dcval))
     (loop for dptr fixnum from 0 to 7 ; iterating over columns
           if (and (zerop (s16ref block dptr 1))
@@ -1708,8 +1723,6 @@
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
              (type (simple-array t (*)) freqs fr)
-	     (type sint16-2d-array *ws*)
-	     (special *ws*)
              (dynamic-extent fr freqs))
     (catch 'marker
       (loop
