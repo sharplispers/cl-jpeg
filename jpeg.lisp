@@ -868,13 +868,11 @@
 ;;; NB: probably it's a good idea to encapsulate this behavior into a class, but I'm
 ;;; afraid that method dispatch would be too slow
 
-(defvar *prev-byte* 0)
-(declaim (type uint8 *prev-byte*))
+(defstruct (write-bits-state (:conc-name write-bits-))
+  (prev-byte 0 :type uint8)
+  (prev-length 0 :type fixnum))
 
-(defvar *prev-length* 0)
-(declaim (type fixnum *prev-length* *prev-length*))
-
-(defun write-bits (bi ni s)
+(defun write-bits (bi ni s write-bits-state)
   (declare #.*optimize*
            (type fixnum bi ni)
            (type stream s))
@@ -888,25 +886,29 @@
           (declare (type fixnum b n)
                    (dynamic-extent b n))
           (cond ((zerop n))
-                ((>= (plus n *prev-length*) 8)
-                 (let* ((result (ash *prev-byte* (minus 8 *prev-length*)))
-                        (total-length (plus n *prev-length*))
+                ((>= (plus n (write-bits-prev-length write-bits-state)) 8)
+                 (let* ((result (ash (write-bits-prev-byte write-bits-state)
+                                     (minus 8 (write-bits-prev-length write-bits-state))))
+                        (total-length (plus n (write-bits-prev-length write-bits-state)))
                         (overflow (minus total-length 8)))
                    (declare (type fixnum overflow total-length result)
                             (dynamic-extent overflow total-length result))
-                   (setf *prev-byte* (ldb (byte overflow 0) b))
+                   (setf (write-bits-prev-byte write-bits-state) (ldb (byte overflow 0) b))
                    (write-stuffed (deposit-field
                                    (ldb (byte (minus n overflow) overflow) b)
-                                   (byte (minus 8 *prev-length*) 0)
+                                   (byte (minus 8 (write-bits-prev-length write-bits-state)) 0)
                                    result)
                                   s)
-                   (setf *prev-length* overflow)))
-                (t  (setf *prev-byte* (deposit-field b (byte n 0) (ash *prev-byte* n)))
-                    (incf *prev-length* n))))))
+                   (setf (write-bits-prev-length write-bits-state) overflow)))
+                (t  (setf (write-bits-prev-byte write-bits-state)
+                          (deposit-field b
+                                         (byte n 0)
+                                         (ash (write-bits-prev-byte write-bits-state) n)))
+                    (incf (write-bits-prev-length write-bits-state) n))))))
 
 ;;; Encodes block using specified huffman tables, returns new pred (DC prediction value)
 ;;; and last code written to stream for padding
-(defun encode-block (block tables pred s)
+(defun encode-block (block tables pred s write-bits-state)
   (declare #.*optimize* (type fixnum pred)
            (type sint16-array block))
   (let* ((ehufsi-dc (first (first tables)))
@@ -920,27 +922,27 @@
 	     (type fixnum-array ehufco-ac ehufco-dc ehufsi-dc ehufsi-ac)
              (dynamic-extent diff dcpos))
     ;; writing dc code first
-    (write-bits (aref ehufco-dc dcpos) (aref ehufsi-dc dcpos) s)
-    (cond ((minusp diff) (write-bits (1- diff) (csize diff) s))
-          (t (write-bits diff (csize diff) s)))
+    (write-bits (aref ehufco-dc dcpos) (aref ehufsi-dc dcpos) s write-bits-state)
+    (cond ((minusp diff) (write-bits (1- diff) (csize diff) s write-bits-state))
+          (t (write-bits diff (csize diff) s write-bits-state)))
     ;; writing ac sequence
     (loop with r fixnum = 0 for k fixnum from 1 to 63 do
           (if (zerop (aref block k))
               (if (= k 63)
                   (progn
-                    (write-bits (aref ehufco-ac 0) (aref ehufsi-ac 0) s) ; writing EOB
+                    (write-bits (aref ehufco-ac 0) (aref ehufsi-ac 0) s write-bits-state) ; writing EOB
                     (return))
                 (incf r))
             (progn
               (loop while (> r 15) do
-                    (write-bits (aref ehufco-ac #xf0) (aref ehufsi-ac #xf0) s)
+                    (write-bits (aref ehufco-ac #xf0) (aref ehufsi-ac #xf0) s write-bits-state)
                     (decf r 16))
               (let* ((ssss (csize (aref block k)))
                      (rs (plus ssss (ash r 4))))
-                (write-bits (aref ehufco-ac rs) (aref ehufsi-ac rs) s)
+                (write-bits (aref ehufco-ac rs) (aref ehufsi-ac rs) s write-bits-state)
                 (when (minusp (aref block k))
                   (decf (aref block k) 1))
-                (write-bits (aref block k) ssss s))
+                (write-bits (aref block k) ssss s write-bits-state))
               (setf r 0))))
     newpred))
 
@@ -1067,8 +1069,7 @@
   (let* ((wd (loop for entry in sampling maximize (the fixnum (first entry))))
          (ht (loop for entry in sampling maximize (the fixnum (second entry))))
 	 (zz-result (make-array 64 :element-type 'sint16))
-	 (*prev-byte* 0) ; State variables for write-bits
-	 (*prev-length* 0)
+         (write-bits-state (make-write-bits-state))
          (isampling (convert-sampling sampling wd ht))
          (height (the fixnum (ash ht 3)))
          (width (the fixnum (ash wd 3)))
@@ -1124,8 +1125,6 @@
         (setq q-tabs q-tabs2))
       (loop for entry across q-tabs do  ; scaling all q-tables
            (q-scale entry q-factor)))
-    (setq *prev-byte* 0)
-    (setq *prev-length* 0)
     (if (and (/= ncomp 1) (/= ncomp 3))
         (write-marker +M_SOI+ out-stream)
         (prepare-JFIF-stream out-stream))
@@ -1180,11 +1179,13 @@
                            (crunch sampled-buf pos q-tab)
                            (setf (aref preds cn)
                                  (encode-block (zigzag (aref sampled-buf pos) zz-result)
-                                               hufftabs (aref preds cn) out-stream)))))))))
-    (unless (zerop *prev-length*)
+                                               hufftabs (aref preds cn) out-stream
+                                               write-bits-state)))))))))
+    (unless (zerop (write-bits-prev-length write-bits-state))
       (write-stuffed (deposit-field #xff ; byte padding & flushing
-                                    (byte (minus 8 *prev-length*) 0)
-                                    (the fixnum (ash (the uint8 *prev-byte*) (the uint8 (minus 8 *prev-length*)))))
+                                    (byte (minus 8 (write-bits-prev-length write-bits-state)) 0)
+                                    (the fixnum (ash (the uint8 (write-bits-prev-byte write-bits-state))
+                                                     (the uint8 (minus 8 (write-bits-prev-length write-bits-state))))))
                      out-stream))
     (write-marker +M_EOI+ out-stream)))
 
