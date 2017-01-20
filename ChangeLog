@@ -1,3 +1,7 @@
+2017-01-20  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Fixed the special vairable related warnings via explicit argument passing (@slyrus)
+
 2017-01-15  Eugene Zaikonnikov  <eugene@funcall.org>
 
 	* Added convenicence CONVERT-CMYK-TO-RGB function
