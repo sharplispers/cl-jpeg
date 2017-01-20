@@ -1513,15 +1513,7 @@
 (defmacro dct-limit (n)
   `(aref *idct-limit-array* (logand (plus ,n 255) 511)))
 
-(defvar *ws* (2d-sint16-array
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)))
+(defvar *ws*)
 (declaim (type sint16-2d-array *ws*))
 
 ;;; Inverse LLM DCT and dequantization
