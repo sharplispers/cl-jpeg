@@ -1918,11 +1918,12 @@
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error 'unrecognized-file-format))
+  (when descriptor
+    (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
+	 (setf (scan-x scan) 0
+	       (scan-y scan) 0)))
   (let* ((image (or descriptor (make-descriptor)))
          (marker (interpret-markers image 0 stream)))
-    (loop for scan across (descriptor-scans image) do ;required if we reuse descriptors
-	 (setf (scan-x scan) 0
-	       (scan-y scan) 0))
     (cond ((= +M_SOF0+ marker)
            (decode-frame image stream buffer)
            (when colorspace-conversion
