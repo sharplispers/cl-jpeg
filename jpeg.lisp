@@ -1913,12 +1913,16 @@
 		 (error 'unsupported-jpeg-frame-marker))
 	       (setf term (decode-scan image j s)))))
 
-(defun decode-stream (stream &key buffer (colorspace-conversion t))
+(defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor)
   "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
 progressive DCT-based JPEGs."
   (unless (= (read-marker stream) +M_SOI+)
     (error 'unrecognized-file-format))
-  (let* ((image (make-descriptor))
+  (when descriptor
+    (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
+	 (setf (scan-x scan) 0
+	       (scan-y scan) 0)))
+  (let* ((image (or descriptor (make-descriptor)))
          (marker (interpret-markers image 0 stream)))
     (cond ((= +M_SOF0+ marker)
            (decode-frame image stream buffer)
