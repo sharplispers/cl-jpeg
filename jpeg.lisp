@@ -1303,8 +1303,7 @@
 (defun izigzag8 (inbuf zzbuf)
   (declare #.*optimize*
            (type uint8-array inbuf)
-	   (type uint8-2d-array zzbuf)
-	   )
+	   (type uint8-2d-array zzbuf))
   "Performs inverse zigzag block arrangement"
   (loop for zrow across +zigzag-index+
         for row across zzbuf do
