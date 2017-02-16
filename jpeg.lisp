@@ -1245,6 +1245,16 @@
   (qdest (make-array 4) :type (simple-array t (*)))
   (zz (make-array 64 :element-type 'sint16) :type sint16-array)
   (ncomp 0 :type fixnum)
+  (ws (2d-sint16-array
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0))
+      :type sint16-2d-array)	; Temporary workspace for IDCT
   (adobe-app14-transform nil))
 
 ;;; Reads an JPEG marker from the stream
@@ -1513,11 +1523,8 @@
 (defmacro dct-limit (n)
   `(aref *idct-limit-array* (logand (plus ,n 255) 511)))
 
-(defvar *ws*)
-(declaim (type sint16-2d-array *ws*))
-
 ;;; Inverse LLM DCT and dequantization
-(defun inverse-llm-dct (block q-table)
+(defun inverse-llm-dct (block q-table ws)
   "Performs Inverse LMM DCT and dequantization"
   (let ((tmp0 0) (tmp1 0) (tmp2 0) (tmp3 0)
         (tmp10 0) (tmp11 0) (tmp12 0) (tmp13 0)
@@ -1536,14 +1543,14 @@
                   (zerop (s16ref block dptr 6))
                   (zerop (s16ref block dptr 7))) do
           (setf dcval (ash (the fixnum (dequantize dptr 0 block q-table)) 1))
-          (setf (s16ref *ws* dptr 0) dcval)
-          (setf (s16ref *ws* dptr 1) dcval)
-          (setf (s16ref *ws* dptr 2) dcval)
-          (setf (s16ref *ws* dptr 3) dcval)
-          (setf (s16ref *ws* dptr 4) dcval)
-          (setf (s16ref *ws* dptr 5) dcval)
-          (setf (s16ref *ws* dptr 6) dcval)
-          (setf (s16ref *ws* dptr 7) dcval)
+          (setf (s16ref ws dptr 0) dcval)
+          (setf (s16ref ws dptr 1) dcval)
+          (setf (s16ref ws dptr 2) dcval)
+          (setf (s16ref ws dptr 3) dcval)
+          (setf (s16ref ws dptr 4) dcval)
+          (setf (s16ref ws dptr 5) dcval)
+          (setf (s16ref ws dptr 6) dcval)
+          (setf (s16ref ws dptr 7) dcval)
           else do
           (setf z2 (dequantize dptr 2 block q-table))
           (setf z3 (dequantize dptr 6 block q-table))
@@ -1581,17 +1588,17 @@
           (incf tmp1 (plus z2 z4))
           (incf tmp2 (plus z2 z3))
           (incf tmp3 (plus z1 z4))
-          (setf (s16ref *ws* dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
-          (setf (s16ref *ws* dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
-          (setf (s16ref *ws* dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
-          (setf (s16ref *ws* dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
-          (setf (s16ref *ws* dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
-          (setf (s16ref *ws* dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
-          (setf (s16ref *ws* dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
-          (setf (s16ref *ws* dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
+          (setf (s16ref ws dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
+          (setf (s16ref ws dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
+          (setf (s16ref ws dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
+          (setf (s16ref ws dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
+          (setf (s16ref ws dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
+          (setf (s16ref ws dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
+          (setf (s16ref ws dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
+          (setf (s16ref ws dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
 
     (loop for row of-type sint16-array across block ; iterating over rows
-          for inrow of-type sint16-array across *ws*
+          for inrow of-type sint16-array across ws
           if (not (find-if-not #'zerop inrow :start 1)) do
           (setf dcval (dct-limit (descale (aref inrow 0) 4)))
           (setf (aref row 0) dcval)
@@ -1694,15 +1701,6 @@
          (Vmax (loop for entry across fr maximize (the fixnum (second entry))))
          (x-growth (ash Hmax 3))
          (y-growth (ash Vmax 3))
-	 (*ws* (2d-sint16-array
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0))) ; Temporary workspace for IDCT
          (freqs (make-array ncomp :initial-contents
                             (loop for i fixnum from 0 below ncomp ; collecting sampling frequencies
                                   for cid fixnum = (first (aref (scan-cdesc scan) i))
@@ -1748,7 +1746,7 @@
                                       (when (and (< (plus x-pos (scan-x scan)) (descriptor-width image))
                                                  (< (plus y-pos (scan-y scan)) (descriptor-height image)))
                                         ;; inverse DCT and block write to the buffer
-                                        (inverse-llm-dct decoded-block q-tab)
+                                        (inverse-llm-dct decoded-block q-tab (descriptor-ws image))
                                         (upsample image scan decoded-block x-pos y-pos
                                                   H V pos nwidth nw nx dend)))))
            (incf (scan-x scan) x-growth)
