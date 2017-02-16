@@ -5,6 +5,10 @@
 	    (jpeg:decode-image pathname)
 	  (jpeg:encode-image #P"/tmp/test.jpg" buf nc h w))))
 
+(defun test-decode (&optional (pathname #P"/home/eugene/Pictures/nyc.jpg"))
+  (time (jpeg:decode-image pathname))
+  nil)
+
 (defun test-reencode-prealloc (&optional (pathname #P"/home/eugene/Pictures/nyc.jpg"))
   (multiple-value-bind (h w ncomp)
       (jpeg-file-dimensions pathname)
