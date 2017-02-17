@@ -67,7 +67,7 @@
 
 (in-package #:jpeg)
 
-(declaim (inline csize quantize get-average zigzag
+(declaim (inline csize quantize get-average zigzag read-jpeg-byte
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
@@ -1245,18 +1245,35 @@
   (qdest (make-array 4) :type (simple-array t (*)))
   (zz (make-array 64 :element-type 'sint16) :type sint16-array)
   (ncomp 0 :type fixnum)
+  (ws (2d-sint16-array
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0)
+       '(0  0  0  0  0  0  0  0))
+      :type sint16-2d-array)	; Temporary workspace for IDCT
+  (byte-reader #'(lambda () ;in case setup fails somehow
+		   (error 'jpeg-decoder-error)) :type function)
+  (source-cache)
   (adobe-app14-transform nil))
+
+(defun read-jpeg-byte (image)
+  (declare #.*optimize*)
+  (the uint8 (funcall (descriptor-byte-reader image))))
 
 ;;; Reads an JPEG marker from the stream
 (defun read-marker (s)
-  (loop for b fixnum = (read-byte s)
+  (loop for b fixnum = (read-jpeg-byte s)
         when (/= b #xff) do (return b)))
 
 ;;; Reads 16-bit word from the stream
 (defun read-word (s)
   "Reads 16-bit word from the stream"
-  (let* ((msb (ash (read-byte s) 8))
-         (lsb (read-byte s))
+  (let* ((msb (ash (read-jpeg-byte s) 8))
+         (lsb (read-jpeg-byte s))
          (word (logior msb lsb)))
     word))
 
@@ -1265,17 +1282,17 @@
   (defun read-app (s)
     "APPn marker reading: just skipping the whole marker"
     (loop for i fixnum from 0 below (minus (read-word s) 2) do
-         (read-byte s)))
+         (read-jpeg-byte s)))
 
 ;;; COM marker reading, same as read-app
   (setf (symbol-function 'read-com) #'read-app))
 
 ;;; Sets up restart interval
-(defun read-dri (image s)
+(defun read-dri (image)
   "Reads restart interval"
-  (read-byte s) ; skipping length
-  (read-byte s)
-  (setf (descriptor-restart-interval image) (read-word s)))
+  (read-jpeg-byte image) ; skipping length
+  (read-jpeg-byte image)
+  (setf (descriptor-restart-interval image) (read-word image)))
 
 ;;; 'Inverse zigzag transform'
 (defun izigzag (inbuf zzbuf)
@@ -1293,8 +1310,7 @@
 (defun izigzag8 (inbuf zzbuf)
   (declare #.*optimize*
            (type uint8-array inbuf)
-	   (type uint8-2d-array zzbuf)
-	   )
+	   (type uint8-2d-array zzbuf))
   "Performs inverse zigzag block arrangement"
   (loop for zrow across +zigzag-index+
         for row across zzbuf do
@@ -1304,15 +1320,15 @@
   zzbuf)
 
 ;;; Reads in quantization tables
-(defun read-dqt (image s)
+(defun read-dqt (image)
   "Reads in quantization tables"
-  (let ((len (minus (read-word s) 2)))
+  (let ((len (minus (read-word image) 2)))
     (loop for i fixnum from (1- len) downto 0 by 65
-          for tq fixnum = (logand (read-byte s) 7)
+          for tq fixnum = (logand (read-jpeg-byte image) 7)
           with intable of-type uint8-array = (make-array 64 :element-type 'uint8)
           for table = (aref (descriptor-qtables image) tq) do
           (loop for pos from 0 to 63 do
-                (setf (aref intable pos) (read-byte s)))
+                (setf (aref intable pos) (read-jpeg-byte image)))
           (izigzag8 intable table))))
 
 ;;; Builds up decoder tables
@@ -1338,11 +1354,11 @@
           (incf j))))
 
 ;;; Loads huffman tables
-(defun read-dht (image s)
+(defun read-dht (image)
   "Loads huffman tables on specified destinations"
-  (let ((len (minus (read-word s) 2))
+  (let ((len (minus (read-word image) 2))
         (count 0))
-    (loop for tcth fixnum = (read-byte s)
+    (loop for tcth fixnum = (read-jpeg-byte image)
           for tc fixnum = (ash tcth -4)
           for th fixnum = (logand tcth 15)
           for tables = (if (zerop tc)
@@ -1351,17 +1367,17 @@
           for bits = (huffstruct-bits tables)
           for sum fixnum = 0 do
           (loop for i fixnum from 0 to 15
-                for entry fixnum = (read-byte s) do
+                for entry fixnum = (read-jpeg-byte image) do
                 (incf sum entry)
                 (setf (aref bits i) entry))
           (setf (huffstruct-huffval tables)
                 (make-array sum :element-type 'uint8
 			    :initial-contents (loop for i fixnum from 0 below sum
-                                                        collecting (read-byte s))))
+                                                        collecting (read-jpeg-byte image))))
           (incf count (plus sum 17))
 	 (multiple-value-bind (maxcode mincode valptr)
               (build-decoder-tables bits (setf (huffstruct-huffcode tables)
-                                               (build-universal-tables bits )))
+                                               (build-universal-tables bits)))
             ;;(declare (type uint8-array mincode valptr))
             (setf (huffstruct-maxcode tables) maxcode)
             (setf (huffstruct-mincode tables) mincode)
@@ -1370,31 +1386,31 @@
 
 ;;; APP14 is assumed to be Adobe proprietary extension marker
 ;;; We parse it to figure out if some special color transform is necessary
-(defun read-app14 (image s)
-  (let ((length (minus (read-word s) 2)))
-    (loop repeat 11 do (read-byte s))
+(defun read-app14 (image)
+  (let ((length (minus (read-word image) 2)))
+    (loop repeat 11 do (read-jpeg-byte image))
     (setf (descriptor-adobe-app14-transform image)
-	  (case (read-byte s)
+	  (case (read-jpeg-byte image)
 	    (0 :unknown)
 	    (1 :ycbcr-rgb)
 	    (2 :ycck-cmyk)
 	    (otherwise :invalid)))
-    (loop repeat (- length 12) do (read-byte s))))
+    (loop repeat (- length 12) do (read-jpeg-byte image))))
 
 ;;; Reads tables etc., returns the first unrecognized marker it met
-(defun interpret-markers (image term s)
+(defun interpret-markers (image term)
   "Reads tables etc., returns the first unrecognized marker it met"
-  (loop for mk fixnum = (cond ((zerop term) (read-marker s))
+  (loop for mk fixnum = (cond ((zerop term) (read-marker image))
                               (t term)) do
        (setf term 0)
-       (cond ((= mk +M_APP14+) (read-app14 image s)) ;Adobe marker
+       (cond ((= mk +M_APP14+) (read-app14 image)) ;Adobe marker
 	     ((= #xe0 (logand #xf0 mk)) ; Unrecognized APPn marker
-	      (read-app s))
+	      (read-app image))
 	     (t (cond ((= mk +M_DAC+) (error 'unsupported-arithmetic-encoding))
-		      ((= mk +M_DRI+) (read-dri image s))
-		      ((= mk +M_DHT+) (read-dht image s))
-		      ((= mk +M_DQT+) (read-dqt image s))
-		      ((= mk +M_COM+) (read-com s))		      
+		      ((= mk +M_DRI+) (read-dri image))
+		      ((= mk +M_DHT+) (read-dht image))
+		      ((= mk +M_DQT+) (read-dqt image))
+		      ((= mk +M_COM+) (read-com image))		      
 		      (t (return mk)))))))
 
 ;;; EXTEND procedure, as described in the standard
@@ -1412,14 +1428,13 @@
   #'(lambda (s)
       (let ((bit 0))
         (declare #.*optimize*
-                 (type fixnum b cnt bit)
-                 (type stream s))
+                 (type fixnum b cnt bit))
         (when (zerop cnt)
-          (setf b (read-byte s))
+          (setf b (read-jpeg-byte s))
           (setf cnt 8)
           (when (= b #xff)
-            (let ((b2 (read-byte s)))
-              (declare (type fixnum b2))
+            (let ((b2 (read-jpeg-byte s)))
+              (declare (type uint8 b2))
               (cond ((zerop b2))
                     ((<= +M_RST0+ b2 +M_RST7+)
                      (throw 'marker 'restart))
@@ -1513,11 +1528,8 @@
 (defmacro dct-limit (n)
   `(aref *idct-limit-array* (logand (plus ,n 255) 511)))
 
-(defvar *ws*)
-(declaim (type sint16-2d-array *ws*))
-
 ;;; Inverse LLM DCT and dequantization
-(defun inverse-llm-dct (block q-table)
+(defun inverse-llm-dct (block q-table ws)
   "Performs Inverse LMM DCT and dequantization"
   (let ((tmp0 0) (tmp1 0) (tmp2 0) (tmp3 0)
         (tmp10 0) (tmp11 0) (tmp12 0) (tmp13 0)
@@ -1536,14 +1548,14 @@
                   (zerop (s16ref block dptr 6))
                   (zerop (s16ref block dptr 7))) do
           (setf dcval (ash (the fixnum (dequantize dptr 0 block q-table)) 1))
-          (setf (s16ref *ws* dptr 0) dcval)
-          (setf (s16ref *ws* dptr 1) dcval)
-          (setf (s16ref *ws* dptr 2) dcval)
-          (setf (s16ref *ws* dptr 3) dcval)
-          (setf (s16ref *ws* dptr 4) dcval)
-          (setf (s16ref *ws* dptr 5) dcval)
-          (setf (s16ref *ws* dptr 6) dcval)
-          (setf (s16ref *ws* dptr 7) dcval)
+          (setf (s16ref ws dptr 0) dcval)
+          (setf (s16ref ws dptr 1) dcval)
+          (setf (s16ref ws dptr 2) dcval)
+          (setf (s16ref ws dptr 3) dcval)
+          (setf (s16ref ws dptr 4) dcval)
+          (setf (s16ref ws dptr 5) dcval)
+          (setf (s16ref ws dptr 6) dcval)
+          (setf (s16ref ws dptr 7) dcval)
           else do
           (setf z2 (dequantize dptr 2 block q-table))
           (setf z3 (dequantize dptr 6 block q-table))
@@ -1581,17 +1593,17 @@
           (incf tmp1 (plus z2 z4))
           (incf tmp2 (plus z2 z3))
           (incf tmp3 (plus z1 z4))
-          (setf (s16ref *ws* dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
-          (setf (s16ref *ws* dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
-          (setf (s16ref *ws* dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
-          (setf (s16ref *ws* dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
-          (setf (s16ref *ws* dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
-          (setf (s16ref *ws* dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
-          (setf (s16ref *ws* dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
-          (setf (s16ref *ws* dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
+          (setf (s16ref ws dptr 0) (descale (plus tmp10 tmp3) +shift-1+))
+          (setf (s16ref ws dptr 7) (descale (minus tmp10 tmp3) +shift-1+))
+          (setf (s16ref ws dptr 1) (descale (plus tmp11 tmp2) +shift-1+))
+          (setf (s16ref ws dptr 6) (descale (minus tmp11 tmp2) +shift-1+))
+          (setf (s16ref ws dptr 2) (descale (plus tmp12 tmp1) +shift-1+))
+          (setf (s16ref ws dptr 5) (descale (minus tmp12 tmp1) +shift-1+))
+          (setf (s16ref ws dptr 3) (descale (plus tmp13 tmp0) +shift-1+))
+          (setf (s16ref ws dptr 4) (descale (minus tmp13 tmp0) +shift-1+)))
 
     (loop for row of-type sint16-array across block ; iterating over rows
-          for inrow of-type sint16-array across *ws*
+          for inrow of-type sint16-array across ws
           if (not (find-if-not #'zerop inrow :start 1)) do
           (setf dcval (dct-limit (descale (aref inrow 0) 4)))
           (setf (aref row 0) dcval)
@@ -1676,7 +1688,7 @@
                               (setf (aref buffer dpos) val))))))))
 
 ;;; Reads and decodes either whole scan or restart interval
-(defun decode-chunk (image scan s zzbuf)
+(defun decode-chunk (image scan zzbuf)
   "Reads and decodes either a whole scan (if no restarts) or restart interval"
   (let* ((nextbit (make-nextbit 0 0))
          (ncomp (scan-ncomp scan))
@@ -1694,15 +1706,6 @@
          (Vmax (loop for entry across fr maximize (the fixnum (second entry))))
          (x-growth (ash Hmax 3))
          (y-growth (ash Vmax 3))
-	 (*ws* (2d-sint16-array
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0)
-		'(0  0  0  0  0  0  0  0))) ; Temporary workspace for IDCT
          (freqs (make-array ncomp :initial-contents
                             (loop for i fixnum from 0 below ncomp ; collecting sampling frequencies
                                   for cid fixnum = (first (aref (scan-cdesc scan) i))
@@ -1741,14 +1744,14 @@
                                    for x-pos fixnum from (mul (ash x 3) H) by (ash H 3)
                                    for decoded-block of-type sint16-2d-array =
 				  (izigzag (decode-block (descriptor-zz image)
-							 (aref tables comp) nextbit s) zzbuf) do
+							 (aref tables comp) nextbit image) zzbuf) do
                                    ;; DC decoding and predictor update
                                       (incf (s16ref decoded-block 0 0) (aref preds comp))
                                       (setf (aref preds comp) (s16ref decoded-block 0 0))
                                       (when (and (< (plus x-pos (scan-x scan)) (descriptor-width image))
                                                  (< (plus y-pos (scan-y scan)) (descriptor-height image)))
                                         ;; inverse DCT and block write to the buffer
-                                        (inverse-llm-dct decoded-block q-tab)
+                                        (inverse-llm-dct decoded-block q-tab (descriptor-ws image))
                                         (upsample image scan decoded-block x-pos y-pos
                                                   H V pos nwidth nw nx dend)))))
            (incf (scan-x scan) x-growth)
@@ -1757,7 +1760,7 @@
              (setf (scan-x scan) 0))))))
 
 ;;; Scan decoding subroutine
-(defun decode-scan (image i s)
+(defun decode-scan (image i)
   (let ((scan (aref (descriptor-scans image) i))
 	(zzbuf (2d-sint16-array
 			    '(0  0  0  0  0  0  0  0)
@@ -1768,18 +1771,18 @@
 			    '(0  0  0  0  0  0  0  0)
 			    '(0  0  0  0  0  0  0  0)
 			    '(0  0  0  0  0  0  0  0))))
-    (read-byte s) ; length
-    (read-byte s)
-    (loop with ncomp fixnum = (setf (scan-ncomp scan) (read-byte s))
+    (read-jpeg-byte image) ; length
+    (read-jpeg-byte image)
+    (loop with ncomp fixnum = (setf (scan-ncomp scan) (read-jpeg-byte image))
           for j fixnum from 0 below ncomp do
-          (setf (first (aref (scan-cdesc scan) j)) (read-byte s)) ; component ID
-          (setf (second (aref (scan-cdesc scan) j)) (read-byte s))) ; Td and Ta nibbles
-    (read-byte s)
-    (read-byte s)
-    (read-byte s)
+          (setf (first (aref (scan-cdesc scan) j)) (read-jpeg-byte image)) ; component ID
+          (setf (second (aref (scan-cdesc scan) j)) (read-jpeg-byte image))) ; Td and Ta nibbles
+    (read-jpeg-byte image)
+    (read-jpeg-byte image)
+    (read-jpeg-byte image)
     (if (= (descriptor-restart-interval image) 0)
-        (decode-chunk image scan s zzbuf) ; reading the whole scan at once
-      (loop for term = (decode-chunk image scan s zzbuf)
+        (decode-chunk image scan zzbuf) ; reading the whole scan at once
+      (loop for term = (decode-chunk image scan zzbuf)
             while (eq 'restart term)
             finally (return term))))) ; or in pieces
 
@@ -1868,13 +1871,13 @@
 	      :element-type 'uint8
 	      :initial-element 0))
 
-(defun decode-frame-beginning (image s buffer)
-  (read-byte s) ; length
-  (read-byte s)
-  (read-byte s) ; sample precision
-  (let ((height (read-word s))
-        (width (read-word s))
-        (ncomp (read-byte s)))
+(defun decode-frame-beginning (image buffer)
+  (read-jpeg-byte image) ; length
+  (read-jpeg-byte image)
+  (read-jpeg-byte image) ; sample precision
+  (let ((height (read-word image))
+        (width (read-word image))
+        (ncomp (read-jpeg-byte image)))
     (if (arrayp buffer)
         (if (< (length buffer) (* (setf (descriptor-height image) height)
                                   (setf (descriptor-width image) width)
@@ -1887,15 +1890,15 @@
                                (setf (descriptor-ncomp image) ncomp))))))
 
 ;;; Frame decoding subroutine
-(defun decode-frame (image s buffer)
-  (decode-frame-beginning image s buffer)
+(defun decode-frame (image buffer)
+  (decode-frame-beginning image buffer)
   (loop for i fixnum from 0 below (descriptor-ncomp image)
      with hv fixnum do
-       (setf (aref (descriptor-cid image) i) (read-byte s)) ; Cj
-       (setf hv (read-byte s))				    ; HV
+       (setf (aref (descriptor-cid image) i) (read-jpeg-byte image)) ; Cj
+       (setf hv (read-jpeg-byte image))				    ; HV
        (setf (aref (descriptor-H image) i) (ash hv -4))
        (setf (aref (descriptor-V image) i) (logand hv 7))
-       (setf (aref (descriptor-qdest image) i) (read-byte s)))
+       (setf (aref (descriptor-qdest image) i) (read-jpeg-byte image)))
 	(let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
 		       collecting (list (aref (descriptor-H image) i)
 					(aref (descriptor-V image) i))))
@@ -1909,56 +1912,98 @@
 	  (loop with term fixnum = 0
 	     for j fixnum from 0
 	     until (= term +M_EOI+) do
-	       (when (/= (interpret-markers image term s) +M_SOS+)
+	       (when (/= (interpret-markers image term) +M_SOS+)
 		 (error 'unsupported-jpeg-frame-marker))
-	       (setf term (decode-scan image j s)))))
+	       (setf term (decode-scan image j)))))
 
-(defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor)
+(defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor cached-source-p)
   "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
 progressive DCT-based JPEGs."
-  (unless (= (read-marker stream) +M_SOI+)
-    (error 'unrecognized-file-format))
+  (when (and (null stream) (not cached-source-p))
+    (error 'invalid-buffer-supplied))
   (when descriptor
     (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
 	 (setf (scan-x scan) 0
 	       (scan-y scan) 0)))
   (let* ((image (or descriptor (make-descriptor)))
-         (marker (interpret-markers image 0 stream)))
-    (cond ((= +M_SOF0+ marker)
-           (decode-frame image stream buffer)
-           (when colorspace-conversion
-	     (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
-		    (inverse-colorspace-convert image))
-		   ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
-		    (ycck-cmyk-convert image))
-		   ((= (descriptor-ncomp image) 3)
-		    (inverse-colorspace-convert image))))
-           (values (descriptor-buffer image)
-                   (descriptor-height image)
-                   (descriptor-width image)
-                   (descriptor-ncomp image)
-		   (descriptor-adobe-app14-transform image)))
-          (t (error 'unsupported-jpeg-format :code marker)))))
+	 (pos 0))
+    (setf (descriptor-byte-reader image) 
+	  (if cached-source-p
+	      (progn
+		(when (or (not (typep (descriptor-source-cache image) 'array))
+			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
+		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
+		(when stream ;; NULL stream means the cache in descriptor is already read
+		  (read-sequence (descriptor-source-cache image) stream))
+		#'(lambda ()
+		    (let ((cache (descriptor-source-cache image)))
+		      (declare #.*optimize*
+			       (type uint8-array cache)
+			       (type fixnum pos))
+		      (prog1 (aref cache pos) (incf pos)))))
+	      #'(lambda ()
+		  (read-byte stream))))
+    (unless (= (read-marker image) +M_SOI+)
+      (error 'unrecognized-file-format))
+    (let ((marker (interpret-markers image 0)))
+      (cond ((= +M_SOF0+ marker)
+	     (decode-frame image buffer)
+	     (when colorspace-conversion
+	       (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
+		      (inverse-colorspace-convert image))
+		     ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
+		      (ycck-cmyk-convert image))
+		     ((= (descriptor-ncomp image) 3)
+		      (inverse-colorspace-convert image))))
+	     (values (descriptor-buffer image)
+		     (descriptor-height image)
+		     (descriptor-width image)
+		     (descriptor-ncomp image)
+		     (descriptor-adobe-app14-transform image)))
+	    (t (error 'unsupported-jpeg-format :code marker))))))
 
 ;;; Top level decoder function
-(defun decode-image (filename &key buffer (colorspace-conversion t))
+(defun decode-image (filename &key buffer (colorspace-conversion t) cached-source-p)
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion)))
+    (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion :cached-source-p cached-source-p)))
 
-(defun decode-stream-height-width-ncomp (stream)
+(defun decode-stream-height-width-ncomp (stream &key descriptor cached-source-p)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
-  (unless (= (read-marker stream) +M_SOI+)
-    (error 'unrecognized-file-format))
-  (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
-         (marker (interpret-markers image 0 stream)))
-    (cond ((or (= +M_SOF0+ marker)
-               (= +M_SOF2+ marker)) (decode-frame-beginning image stream nil)
-           (values (descriptor-height image)
-                   (descriptor-width image)
-		   (descriptor-ncomp image)
-		   (descriptor-adobe-app14-transform image)))
-          (t (error 'unsupported-jpeg-format :code marker)))))
+  (when (and (null stream) (not cached-source-p))
+    (error 'invalid-buffer-supplied))
+  (when descriptor
+    (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
+	 (setf (scan-x scan) 0
+	       (scan-y scan) 0)))
+  (let* ((image (or descriptor (make-descriptor)))
+	 (pos 0))
+    (setf (descriptor-byte-reader image) 
+	  (if cached-source-p
+	      (progn
+		(when (or (not (typep (descriptor-source-cache image) 'array))
+			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
+		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
+		(when stream ;; NULL stream means the cache in descriptor is already read
+		  (read-sequence (descriptor-source-cache image) stream))
+		#'(lambda ()
+		    (let ((cache (descriptor-source-cache image)))
+		      (declare #.*optimize*
+			       (type uint8-array cache)
+			       (type fixnum pos))
+		      (prog1 (the uint8 (aref cache pos)) (incf pos)))))
+	      #'(lambda ()
+		  (the uint8 (read-byte stream)))))
+    (unless (= (read-marker image) +M_SOI+)
+      (error 'unrecognized-file-format))
+    (let ((marker (interpret-markers image 0)))
+      (cond ((or (= +M_SOF0+ marker)
+		 (= +M_SOF2+ marker)) (decode-frame-beginning image nil)
+	     (values (descriptor-height image)
+		     (descriptor-width image)
+		     (descriptor-ncomp image)
+		     (descriptor-adobe-app14-transform image)))
+	    (t (error 'unsupported-jpeg-format :code marker))))))
 
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components, plus the type of Adobe colorpsace transform"

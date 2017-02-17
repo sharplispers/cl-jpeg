@@ -8,4 +8,6 @@
 	   #:convert-cmyk-to-rgb
 	   #:allocate-buffer
 	   #:jpeg-file-dimensions
-           #:jpeg-to-bmp))
+           #:jpeg-to-bmp
+	   #:descriptor-source-cache
+	   #:read-dht))
