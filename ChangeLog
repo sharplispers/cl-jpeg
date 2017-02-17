@@ -1,3 +1,7 @@
+2017-02-17  Eugene Zaikonnikov  <eugene@funcall.org>
+
+	* Added :CACHED-SOURCE-P option to decoder allowing to read-sequence the image at once
+
 2017-02-16  Eugene Zaikonnikov  <eugene@funcall.org>
 
 	* Added a test for decode only
