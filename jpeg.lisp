@@ -67,7 +67,7 @@
 
 (in-package #:jpeg)
 
-(declaim (inline csize quantize get-average zigzag
+(declaim (inline csize quantize get-average zigzag read-jpeg-byte
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
                  izigzag write-bits))
@@ -1926,11 +1926,16 @@ progressive DCT-based JPEGs."
     (setf (descriptor-byte-reader image) 
 	  (if cached-source-p
 	      (progn
-		(unless (and (typep (descriptor-source-cache image) 'array) (>= (length (descriptor-source-cache image)) (file-length stream)))
-		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8))
-		  (read-sequence (descriptor-source-cache image) stream))
+		(when (or (not (typep (descriptor-source-cache image) 'array))
+			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
+		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
+		(read-sequence (descriptor-source-cache image) stream)
 		#'(lambda ()
-		    (prog1 (aref (descriptor-source-cache image) pos) (incf pos))))
+		    (let ((cache (descriptor-source-cache image)))
+		      (declare #.*optimize*
+			       (type uint8-array cache)
+			       (type fixnum pos))
+		      (prog1 (aref cache pos) (incf pos)))))
 	      #'(lambda ()
 		  (read-byte stream))))
     (unless (= (read-marker image) +M_SOI+)
