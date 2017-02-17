@@ -1989,9 +1989,9 @@ DECODE-STREAM and also supports progressive DCT-based JPEGs."
 		      (declare #.*optimize*
 			       (type uint8-array cache)
 			       (type fixnum pos))
-		      (prog1 (aref cache pos) (incf pos)))))
+		      (prog1 (the uint8 (aref cache pos)) (incf pos)))))
 	      #'(lambda ()
-		  (read-byte stream))))
+		  (the uint8 (read-byte stream)))))
     (unless (= (read-marker image) +M_SOI+)
       (error 'unrecognized-file-format))
     (let ((marker (interpret-markers image 0)))
