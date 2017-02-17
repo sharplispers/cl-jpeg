@@ -1965,20 +1965,43 @@ progressive DCT-based JPEGs."
   (with-open-file (in filename :direction :input :element-type 'uint8)
     (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion :cached-source-p cached-source-p)))
 
-(defun decode-stream-height-width-ncomp (stream)
+(defun decode-stream-height-width-ncomp (stream &key descriptor cached-source-p)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
-  (unless (= (read-marker stream) +M_SOI+)
-    (error 'unrecognized-file-format))
-  (let* ((image (make-descriptor)) ;; KLUDGE doing a lot of extra consing here
-         (marker (interpret-markers image 0)))
-    (cond ((or (= +M_SOF0+ marker)
-               (= +M_SOF2+ marker)) (decode-frame-beginning image nil)
-           (values (descriptor-height image)
-                   (descriptor-width image)
-		   (descriptor-ncomp image)
-		   (descriptor-adobe-app14-transform image)))
-          (t (error 'unsupported-jpeg-format :code marker)))))
+  (when (and (null stream) (not cached-source-p))
+    (error 'invalid-buffer-supplied))
+  (when descriptor
+    (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
+	 (setf (scan-x scan) 0
+	       (scan-y scan) 0)))
+  (let* ((image (or descriptor (make-descriptor)))
+	 (pos 0))
+    (setf (descriptor-byte-reader image) 
+	  (if cached-source-p
+	      (progn
+		(when (or (not (typep (descriptor-source-cache image) 'array))
+			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
+		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
+		(when stream ;; NULL stream means the cache in descriptor is already read
+		  (read-sequence (descriptor-source-cache image) stream))
+		#'(lambda ()
+		    (let ((cache (descriptor-source-cache image)))
+		      (declare #.*optimize*
+			       (type uint8-array cache)
+			       (type fixnum pos))
+		      (prog1 (aref cache pos) (incf pos)))))
+	      #'(lambda ()
+		  (read-byte stream))))
+    (unless (= (read-marker image) +M_SOI+)
+      (error 'unrecognized-file-format))
+    (let ((marker (interpret-markers image 0)))
+      (cond ((or (= +M_SOF0+ marker)
+		 (= +M_SOF2+ marker)) (decode-frame-beginning image nil)
+	     (values (descriptor-height image)
+		     (descriptor-width image)
+		     (descriptor-ncomp image)
+		     (descriptor-adobe-app14-transform image)))
+	    (t (error 'unsupported-jpeg-format :code marker))))))
 
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components, plus the type of Adobe colorpsace transform"
