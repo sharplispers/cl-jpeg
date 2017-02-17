@@ -1917,6 +1917,8 @@
 (defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor cached-source-p)
   "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
 progressive DCT-based JPEGs."
+  (when (and (null stream) (not cached-source-p))
+    (error 'invalid-buffer-supplied))
   (when descriptor
     (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
 	 (setf (scan-x scan) 0
@@ -1929,7 +1931,8 @@ progressive DCT-based JPEGs."
 		(when (or (not (typep (descriptor-source-cache image) 'array))
 			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
 		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
-		(read-sequence (descriptor-source-cache image) stream)
+		(when stream ;; NULL stream means the cache in descriptor is already read
+		  (read-sequence (descriptor-source-cache image) stream))
 		#'(lambda ()
 		    (let ((cache (descriptor-source-cache image)))
 		      (declare #.*optimize*
