@@ -37,5 +37,5 @@
   (time (with-open-file (stream pathname :direction :input :element-type 'uint8)
     (let ((seq (make-array (file-length stream))))
     (read-sequence seq stream)
-    (flexi-streams:with-input-from-sequence (is seq)  (jpeg:decode-stream is)))))
+    (flexi-streams:with-input-from-sequence (is seq) (jpeg:decode-stream is)))))
   nil)
