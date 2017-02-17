@@ -9,4 +9,5 @@
 	   #:allocate-buffer
 	   #:jpeg-file-dimensions
            #:jpeg-to-bmp
-	   #:descriptor-source-cache))
+	   #:descriptor-source-cache
+	   #:read-dht))
