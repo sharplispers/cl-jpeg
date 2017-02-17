@@ -1255,12 +1255,14 @@
        '(0  0  0  0  0  0  0  0)
        '(0  0  0  0  0  0  0  0))
       :type sint16-2d-array)	; Temporary workspace for IDCT
-  (byte-reader)
+  (byte-reader #'(lambda () ;in case setup fails somehow
+		   (error 'jpeg-decoder-error)) :type function)
   (source-cache)
   (adobe-app14-transform nil))
 
 (defun read-jpeg-byte (image)
-  (funcall (descriptor-byte-reader image)))
+  (declare #.*optimize*)
+  (the uint8 (funcall (descriptor-byte-reader image))))
 
 ;;; Reads an JPEG marker from the stream
 (defun read-marker (s)
