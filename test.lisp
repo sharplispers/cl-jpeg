@@ -17,11 +17,11 @@
       (time (jpeg:decode-stream stream :cached-source-p t :descriptor d))))
   nil)
 
-(defun test-reencode-prealloc (&optional (pathname #P"/home/eugene/Pictures/nyc.jpg"))
+(defun test-reencode-prealloc (&key (pathname #P"/home/eugene/Pictures/nyc.jpg") cached)
   (multiple-value-bind (h w ncomp)
       (jpeg-file-dimensions pathname)
     (let ((buf (allocate-buffer h w ncomp)))
-      (decode-image pathname buf)
+      (decode-image pathname :buffer buf :cached-source-p cached)
       (encode-image #P"/tmp/test.jpg" buf ncomp h w))))
 
 (defparameter *gray-q-tabs* (vector jpeg::+q-luminance+))
