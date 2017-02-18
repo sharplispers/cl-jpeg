@@ -1416,11 +1416,12 @@
 
 ;;; EXTEND procedure, as described in the standard
 (defun extend (v tt)
-  (declare (type fixnum tt))
   "EXTEND procedure, as described in spec."
-  (let ((vt (ash 2 (minus tt 2))))
+  (let ((vt (ash 1 (the (and fixnum (integer 0)) (minus tt 1)))))
+    (declare (type fixnum v vt tt)
+             #.*optimize*)
     (if (< v vt)
-        (plus v (1+ (ash -1 tt)))
+        (plus v (plus 1 (ash -1 (the (and fixnum (integer 0)) tt))))
       v)))
 
 ;;; Returns the closure which reads specified numbers of bits from the stream
