@@ -1298,10 +1298,11 @@
 (defun izigzag (inbuf zzbuf)
   (declare #.*optimize*
            (type sint16-array inbuf)
-	   (type sint16-2d-array zzbuf +zigzag-index+))
+	   (type sint16-2d-array zzbuf)
+	   (type uint8-2d-array +zigzag-index+))
   "Performs inverse zigzag block arrangement"
-  (loop for zrow across +zigzag-index+
-        for row across zzbuf do
+  (loop for zrow of-type uint8-array across +zigzag-index+
+        for row of-type sint16-array across zzbuf do
         (loop for pos fixnum across zrow
               for x fixnum from 0 do
               (setf (aref row x) (aref inbuf pos))))
@@ -1310,10 +1311,10 @@
 (defun izigzag8 (inbuf zzbuf)
   (declare #.*optimize*
            (type uint8-array inbuf)
-	   (type uint8-2d-array zzbuf))
+	   (type uint8-2d-array zzbuf +zigzag-index+))
   "Performs inverse zigzag block arrangement"
-  (loop for zrow across +zigzag-index+
-        for row across zzbuf do
+  (loop for zrow of-type uint8-array across +zigzag-index+
+        for row of-type uint8-array across zzbuf do
         (loop for pos fixnum across zrow
               for x fixnum from 0 do
               (setf (aref row x) (aref inbuf pos))))
@@ -1415,11 +1416,14 @@
 
 ;;; EXTEND procedure, as described in the standard
 (defun extend (v tt)
-  (declare (type fixnum tt))
   "EXTEND procedure, as described in spec."
-  (let ((vt (ash 2 (minus tt 2))))
+  (let ((vt (if (> tt 0)
+                (ash 1 (the (and fixnum (integer 0)) (minus tt 1)))
+                0)))
+    (declare (type fixnum v vt tt)
+             #.*optimize*)
     (if (< v vt)
-        (plus v (1+ (ash -1 tt)))
+        (plus v (plus 1 (ash -1 (the (and fixnum (integer 0)) tt))))
       v)))
 
 ;;; Returns the closure which reads specified numbers of bits from the stream
@@ -1451,6 +1455,10 @@
   "The DECODE procedure, as described in CCITT rec."
   (let ((i 1)
         (code (funcall nextbit s)))
+    (declare #.*optimize*
+             (type (simple-array uint8 (*)) huffval)
+             (type (simple-array fixnum (*)) maxcode mincode valptr)
+             (type fixnum i code))
     (loop while (> code (aref maxcode i)) do
           (incf i)
           (setf code (plus (ash code 1) (funcall nextbit s))))
@@ -1672,7 +1680,7 @@
              (type uint8-array buffer)
              (type fixnum x y H V ncomp xbase ybase nwidth nx dend nxbase nybase offset)
              (dynamic-extent ncomp xbase ybase nxbase nybase))
-    (loop for row across block
+    (loop for row of-type sint16-array across block
           for y fixnum from ybase below (descriptor-height image) by V
           for ypos fixnum from nybase by nw do
           (loop for val fixnum across row
@@ -1712,21 +1720,20 @@
                                   for pos fixnum = (position cid (descriptor-cid image))
                                   collecting (list (aref (descriptor-iH image) pos)
                                                    (aref (descriptor-iV image) pos)))))
-         (preds (make-array ncomp :initial-element 0 :element-type 'sint16)))
+         (preds (make-array ncomp :initial-element 0 :element-type 'sint16))
+         (tables (make-array ncomp
+                     :initial-contents
+                     (loop for i fixnum from 0 below ncomp
+                           for ta fixnum = (logand (second (aref (scan-cdesc scan) i)) 15)
+                           for td fixnum = (ash (the fixnum (second (aref (scan-cdesc scan) i))) -4)
+                           collecting (vector (aref (descriptor-huff-ac image) ta)
+                                              (aref (descriptor-huff-dc image) td))))))
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
-             (type (simple-array t (*)) freqs fr)
+             (type (simple-array t (*)) freqs fr tables)
              (dynamic-extent fr freqs))
     (catch 'marker
       (loop
-        with tables =
-           (make-array ncomp
-                       :initial-contents
-                       (loop for i fixnum from 0 below ncomp
-                             for ta fixnum = (logand (second (aref (scan-cdesc scan) i)) 15)
-                             for td fixnum = (ash (the fixnum (second (aref (scan-cdesc scan) i))) -4)
-                             collecting (vector (aref (descriptor-huff-ac image) ta)
-                                                (aref (descriptor-huff-dc image) td))))
         do (loop for comp fixnum from 0 below ncomp
                  for pos fixnum =
                     (position (the fixnum (first (aref (scan-cdesc scan) comp)))
