@@ -1417,7 +1417,9 @@
 ;;; EXTEND procedure, as described in the standard
 (defun extend (v tt)
   "EXTEND procedure, as described in spec."
-  (let ((vt (ash 1 (the (and fixnum (integer 0)) (minus tt 1)))))
+  (let ((vt (if (> tt 0)
+                (ash 1 (the (and fixnum (integer 0)) (minus tt 1)))
+                0)))
     (declare (type fixnum v vt tt)
              #.*optimize*)
     (if (< v vt)
