@@ -390,31 +390,31 @@
 (defconstant +g-v-off+ (* 6 256))
 (defconstant +b-v-off+ (* 7 256))
 
-(declaim (type fixnum-array *ctab* *cr-r-tab* *cb-g-tab* *cr-g-tab* *cb-b-tab*))
+(declaim (type fixnum-array +ctab+ +cr-r-tab+ +cb-g-tab+ +cr-g-tab+ +cb-b-tab+))
 
 ;;;Direct color conversion table
-(defparameter *ctab* (make-array 2048 :element-type 'fixnum :initial-element 0))
-
-;;; Filling in the table
-(loop for i fixnum from 0 to 255 do
-      (setf (aref *ctab* (plus i +r-y-off+))
-            (mul +.299+ i))
-      (setf (aref *ctab* (plus i +g-y-off+))
-            (mul +.587+ i))
-      (setf (aref *ctab* (plus i +b-y-off+))
-            (mul +.114+ i))
-      (setf (aref *ctab* (plus i +r-u-off+))
-            (mul +-.1687+ i))
-      (setf (aref *ctab* (plus i +g-u-off+))
-            (mul +-.3313+ i))
-      (setf (aref *ctab* (plus i +b-u-off+))
-            (+ (mul +.5+ i) +uvoffset+ +one-half+))
-      (setf (aref *ctab* (plus i +r-v-off+))
-            (+ (mul +.5+ i) +uvoffset+ +one-half+))
-      (setf (aref *ctab* (plus i +g-v-off+))
-            (mul +-.4187+ i))
-      (setf (aref *ctab* (plus i +b-v-off+))
-            (mul +-.0813+ i)))
+(define-constant +ctab+
+    (let ((table (make-array 2048 :element-type 'fixnum :initial-element 0)))
+      (loop for i fixnum from 0 to 255 do
+           (setf (aref table (plus i +r-y-off+))
+                 (mul +.299+ i))
+           (setf (aref table (plus i +g-y-off+))
+                 (mul +.587+ i))
+           (setf (aref table (plus i +b-y-off+))
+                 (mul +.114+ i))
+           (setf (aref table (plus i +r-u-off+))
+                 (mul +-.1687+ i))
+           (setf (aref table (plus i +g-u-off+))
+                 (mul +-.3313+ i))
+           (setf (aref table (plus i +b-u-off+))
+                 (+ (mul +.5+ i) +uvoffset+ +one-half+))
+           (setf (aref table (plus i +r-v-off+))
+                 (+ (mul +.5+ i) +uvoffset+ +one-half+))
+           (setf (aref table (plus i +g-v-off+))
+                 (mul +-.4187+ i))
+           (setf (aref table (plus i +b-v-off+))
+                 (mul +-.0813+ i)))
+      table))
 
 ;;; Constantsants for the inverse colorspace conversion
 (defconstant +1.40200+ (round (+ (* 1.40200 (ash 1 shift)) 0.5)))
@@ -423,18 +423,30 @@
 (defconstant +-0.34414+ (round (+ (* -0.34414 (ash 1 shift)) 0.5)))
 
 ;;; Inverse color conversion tables
-(defparameter *cr-r-tab* (make-array 256 :element-type 'fixnum))
-(defparameter *cb-g-tab* (make-array 256 :element-type 'fixnum))
-(defparameter *cr-g-tab* (make-array 256 :element-type 'fixnum))
-(defparameter *cb-b-tab* (make-array 256 :element-type 'fixnum))
-
-;;; Filling up the tables
-(loop for i from 0 to 255
-      for x from -127 do
-      (setf (aref *cr-r-tab* i) (ash (plus (mul +1.40200+ x) +one-half+) (- shift)))
-      (setf (aref *cb-b-tab* i) (ash (plus (mul +1.77200+ x) +one-half+) (- shift)))
-      (setf (aref *cr-g-tab* i) (mul +-0.71414+ x))
-      (setf (aref *cb-g-tab* i) (plus (mul +-0.34414+ x) +one-half+)))
+(define-constant +cr-r-tab+ (make-array 256
+                                        :element-type 'fixnum
+                                        :initial-contents
+                                        (loop for i from 0 to 255
+                                              for x from -127
+                                              collect (ash (plus (mul +1.40200+ x) +one-half+) (- shift)))))
+(define-constant +cb-g-tab+ (make-array 256
+                                        :element-type 'fixnum
+                                        :initial-contents
+                                        (loop for i from 0 to 255
+                                              for x from -127
+                                              collect (plus (mul +-0.34414+ x) +one-half+))))
+(define-constant +cr-g-tab+ (make-array 256
+                                        :element-type 'fixnum
+                                        :initial-contents
+                                        (loop for i from 0 to 255
+                                              for x from -127
+                                              collect (mul +-0.71414+ x))))
+(define-constant +cb-b-tab+ (make-array 256
+                                        :element-type 'fixnum
+                                        :initial-contents
+                                        (loop for i from 0 to 255
+                                              for x from -127
+                                              collect (ash (plus (mul +1.77200+ x) +one-half+) (- shift)))))
 
 ;;; Constants for LLM DCT
 (defconstant dct-shift  ; defining DCT scaling
@@ -614,7 +626,7 @@
     (declare #.*optimize*
              (type fixnum dx dy h w height width xend yend)
 	     (type sint16-2d-array Y U V)
-	     (type fixnum-array *ctab*)
+	     (type fixnum-array +ctab+)
              (type uint8-array RGB))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
@@ -627,19 +639,19 @@
                 for b fixnum = (aref rgb pos)
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
-	       (setf (s16ref Y cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-y-off+))
-								 (aref *ctab* (plus g +g-y-off+))
-								 (aref *ctab* (plus b +b-y-off+))))
+	       (setf (s16ref Y cx cy) (minus (ash (the fixnum (+ (aref +ctab+ (plus r +r-y-off+))
+								 (aref +ctab+ (plus g +g-y-off+))
+								 (aref +ctab+ (plus b +b-y-off+))))
 						  (- shift))
                                              128))
-                (setf (s16ref U cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-u-off+))
-								  (aref *ctab* (plus g +g-u-off+))
-								  (aref *ctab* (plus b +b-u-off+))))
+                (setf (s16ref U cx cy) (minus (ash (the fixnum (+ (aref +ctab+ (plus r +r-u-off+))
+								  (aref +ctab+ (plus g +g-u-off+))
+								  (aref +ctab+ (plus b +b-u-off+))))
 						   (- shift))
                                              128))
-	       (setf (s16ref V cx cy) (minus (ash (the fixnum (+ (aref *ctab* (plus r +r-v-off+))
-								 (aref *ctab* (plus g +g-v-off+))
-								 (aref *ctab* (plus b +b-v-off+))))
+	       (setf (s16ref V cx cy) (minus (ash (the fixnum (+ (aref +ctab+ (plus r +r-v-off+))
+								 (aref +ctab+ (plus g +g-v-off+))
+								 (aref +ctab+ (plus b +b-v-off+))))
 						  (- shift))
                                              128))))
     (values xend yend)))
@@ -1819,14 +1831,14 @@
                 for cb fixnum = (aref buffer pu)
                 for cr fixnum = (aref buffer pv) do
                 (setf (aref buffer py) ; BLUE
-                      (the uint8 (limit (plus yy (aref *cb-b-tab* cb)))))
+                      (the uint8 (limit (plus yy (aref +cb-b-tab+ cb)))))
                 (setf (aref buffer pu) ; GREEN
                       (the uint8 (limit (plus yy (ash (plus
-						       (aref *cb-g-tab* cb)
-						       (aref *cr-g-tab* cr))
+						       (aref +cb-g-tab+ cb)
+						       (aref +cr-g-tab+ cr))
 						      (- shift))))))
                 (setf (aref buffer pv) ; RED
-                      (the uint8 (limit (plus yy (aref *cr-r-tab* cr)))))))))
+                      (the uint8 (limit (plus yy (aref +cr-r-tab+ cr)))))))))
 
 (defun ycck-cmyk-convert (image)
   (let* ((buffer (descriptor-buffer image))
@@ -1844,15 +1856,15 @@
 	    for cb fixnum = (aref buffer pu)
 	    for cr fixnum = (aref buffer pv) do
 	      (setf (aref buffer pv)	; BLUE
-		    (the uint8 (limit (minus +max-sample+ (plus yy (aref *cb-b-tab* cb))))))
+		    (the uint8 (limit (minus +max-sample+ (plus yy (aref +cb-b-tab+ cb))))))
 	      (setf (aref buffer pu)	; GREEN
 		    (the uint8 (limit (minus +max-sample+
 					     (plus yy (ash (plus
-							    (aref *cb-g-tab* cb)
-							    (aref *cr-g-tab* cr))
+							    (aref +cb-g-tab+ cb)
+							    (aref +cr-g-tab+ cr))
 							   (- shift)))))))
 	      (setf (aref buffer py)	; RED
-		    (the uint8 (limit (minus +max-sample+ (plus yy (aref *cr-r-tab* cr))))))))))
+		    (the uint8 (limit (minus +max-sample+ (plus yy (aref +cr-r-tab+ cr))))))))))
 
 (defun convert-cmyk-to-rgb (buffer h w &key rgb-buffer)
   (unless rgb-buffer
