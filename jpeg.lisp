@@ -70,7 +70,7 @@
 (declaim (inline csize quantize get-average zigzag read-jpeg-byte
                  llm-dct descale crunch colorspace-convert subsample inverse-llm-dct
                  dequantize upsample extend recieve decode-ac decode-dc decode-block
-                 izigzag write-bits))
+                 izigzag write-bits limit))
 
 (deftype uint8 () '(unsigned-byte 8))
 (deftype uint8-array () '(simple-array uint8 (*)))
@@ -1793,11 +1793,11 @@
             while (eq 'restart term)
             finally (return term))))) ; or in pieces
 
-;;; Macro that bounds value in 0..255 range
-(defmacro limit (n)
-  `(cond ((> ,n 254) 255)
-         ((< ,n 1) 0)
-         (t ,n)))
+;;; Function that bounds value in 0..255 range
+(defun limit (n)
+  (cond ((> n 254) 255)
+        ((< n 1) 0)
+        (t n)))
 
 ;;; Inverse colorspace conversion
 (defun inverse-colorspace-convert (image)
