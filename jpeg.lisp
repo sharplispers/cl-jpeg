@@ -1458,7 +1458,8 @@
     (declare #.*optimize*
              (type (simple-array uint8 (*)) huffval)
              (type (simple-array fixnum (*)) maxcode mincode valptr)
-             (type fixnum i code))
+             (type fixnum i code)
+             (type function nextbit))
     (loop while (> code (aref maxcode i)) do
           (incf i)
           (setf code (plus (ash code 1) (funcall nextbit s))))
@@ -1469,7 +1470,8 @@
   "Recieves ssss bits from the stream"
   (let ((v 0))
     (declare #.*optimize*
-             (type fixnum v ssss))
+             (type fixnum v ssss)
+             (type function nextbit))
     (loop for i fixnum from 0
           until (= i ssss) do
           (setf v (plus (ash v 1) (funcall nextbit s))))
@@ -1731,6 +1733,7 @@
     (declare #.*optimize*
              (type fixnum ncomp Hmax Vmax x-growth y-growth nwidth)
              (type (simple-array t (*)) freqs fr tables)
+             (type (simple-array sint16 (*)) preds)
              (dynamic-extent fr freqs))
     (catch 'marker
       (loop
