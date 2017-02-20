@@ -1945,8 +1945,8 @@ progressive DCT-based JPEGs."
 		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
 		(when stream ;; NULL stream means the cache in descriptor is already read
 		  (read-sequence (descriptor-source-cache image) stream))
-		#'(lambda ()
-		    (let ((cache (descriptor-source-cache image)))
+		(let ((cache (descriptor-source-cache image)))
+		  #'(lambda ()
 		      (declare #.*optimize*
 			       (type uint8-array cache)
 			       (type fixnum pos))
