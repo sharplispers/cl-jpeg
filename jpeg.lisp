@@ -602,7 +602,7 @@
     (declare #.*optimize*
              (type fixnum dx dy h w height width ncomp xend yend)
 	     (type simple-array inbuf)
-	     (type (simple-array uint16-2d-array (*)) outbuf))
+	     (type (simple-array sint16-2d-array (*)) outbuf))
     (setf xend (min xend (1- w)))
     (setf yend (min yend (1- h)))
     (loop for yd fixnum from dy to yend
@@ -612,7 +612,7 @@
                 for cx fixnum = (minus xd dx)
                 for cy fixnum = (minus yd dy) do
                 (loop for i fixnum from 0 below ncomp do
-                      (setf (u16ref (aref outbuf i) cx cy)
+                      (setf (s16ref (aref outbuf i) cx cy)
                             (minus (aref inbuf (plus pos i)) 128)))))
     (values xend yend)))
 
