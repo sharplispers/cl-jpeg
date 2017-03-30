@@ -1949,22 +1949,24 @@ progressive DCT-based JPEGs."
 	       (scan-y scan) 0)))
   (let* ((image (or descriptor (make-descriptor)))
 	 (pos 0))
-    (setf (descriptor-byte-reader image) 
-	  (if cached-source-p
-	      (progn
-		(when (or (not (typep (descriptor-source-cache image) 'array))
-			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
-		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
-		(when stream ;; NULL stream means the cache in descriptor is already read
-		  (read-sequence (descriptor-source-cache image) stream))
-		(let ((cache (descriptor-source-cache image)))
-		  #'(lambda ()
-		      (declare #.*optimize*
-			       (type uint8-array cache)
-			       (type fixnum pos))
-		      (prog1 (aref cache pos) (incf pos)))))
-	      #'(lambda ()
-		  (read-byte stream))))
+    (unless (and descriptor
+                 (descriptor-byte-reader descriptor))
+      (setf (descriptor-byte-reader image)
+            (if cached-source-p
+                (progn
+                  (when (or (not (typep (descriptor-source-cache image) 'array))
+                            (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
+                    (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
+                  (when stream ;; NULL stream means the cache in descriptor is already read
+                    (read-sequence (descriptor-source-cache image) stream))
+                  (let ((cache (descriptor-source-cache image)))
+                    #'(lambda ()
+                        (declare #.*optimize*
+                                 (type uint8-array cache)
+                                 (type fixnum pos))
+                        (prog1 (aref cache pos) (incf pos)))))
+                #'(lambda ()
+                    (read-byte stream)))))
     (unless (= (read-marker image) +M_SOI+)
       (error 'unrecognized-file-format))
     (let ((marker (interpret-markers image 0)))
