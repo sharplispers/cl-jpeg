@@ -10,4 +10,6 @@
 	   #:jpeg-file-dimensions
            #:jpeg-to-bmp
 	   #:descriptor-source-cache
-	   #:read-dht))
+	   #:read-dht
+	   #:inverse-llm-dct #:llm-dct
+	   #:make-descriptor #:descriptor-byte-reader))
