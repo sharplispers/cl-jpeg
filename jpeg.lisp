@@ -1938,7 +1938,7 @@
 		 (error 'unsupported-jpeg-frame-marker))
 	       (setf term (decode-scan image j)))))
 
-(defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor cached-source-p)
+(defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor cached-source-p (decode-frame t))
   "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
 progressive DCT-based JPEGs."
   (when (and (null stream) (not cached-source-p))
@@ -1971,65 +1971,54 @@ progressive DCT-based JPEGs."
                      (read-byte stream)))))
      (unless (= (read-marker image) +M_SOI+)
       (error 'unrecognized-file-format))
-    (let ((marker (interpret-markers image 0)))
-      (cond ((= +M_SOF0+ marker)
-	     (decode-frame image buffer)
-	     (when colorspace-conversion
-	       (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
-		      (inverse-colorspace-convert image))
-		     ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
-		      (ycck-cmyk-convert image))
-		     ((= (descriptor-ncomp image) 3)
-		      (inverse-colorspace-convert image))))
-	     (values (descriptor-buffer image)
-		     (descriptor-height image)
-		     (descriptor-width image)
-		     (descriptor-ncomp image)
-		     (descriptor-adobe-app14-transform image)))
-	    (t (error 'unsupported-jpeg-format :code marker))))))
+     (let ((marker (interpret-markers image 0)))
+       (if decode-frame
+           ;; decode-frame currently only supports baseline DCT frames
+           (cond ((= +M_SOF0+ marker)
+                  (decode-frame image buffer)
+                  (when colorspace-conversion
+                    (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
+                           (inverse-colorspace-convert image))
+                          ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
+                           (ycck-cmyk-convert image))
+                          ((= (descriptor-ncomp image) 3)
+                           (inverse-colorspace-convert image)))))
+                 (t (error 'unsupported-jpeg-format :code marker)))
+           ;; decode-frame-beginning supports baselnie DCT frames
+           ;; and progressive DCT frames, so allow those
+           (cond ((or (= +M_SOF0+ marker)
+                      (= +M_SOF2+ marker))
+                  (decode-frame-beginning image nil))
+                 (t (error 'unsupported-jpeg-format :code marker)))))
+     (values (when decode-frame
+               (descriptor-buffer image))
+             (descriptor-height image)
+             (descriptor-width image)
+             (descriptor-ncomp image)
+             (descriptor-adobe-app14-transform image))))
 
 ;;; Top level decoder function
-(defun decode-image (filename &key buffer (colorspace-conversion t) cached-source-p)
+(defun decode-image (filename &key buffer (colorspace-conversion t) cached-source-p (decode-frame t))
   (with-open-file (in filename :direction :input :element-type 'uint8)
-    (decode-stream in :buffer buffer :colorspace-conversion colorspace-conversion :cached-source-p cached-source-p)))
+    (decode-stream in
+                   :buffer buffer
+                   :colorspace-conversion colorspace-conversion
+                   :cached-source-p cached-source-p
+                   :decode-frame decode-frame)))
 
 (defun decode-stream-height-width-ncomp (stream &key descriptor cached-source-p)
   "Return the height and width of the JPEG data read from STREAM. Does less work than
 DECODE-STREAM and also supports progressive DCT-based JPEGs."
-  (when (and (null stream) (not cached-source-p))
-    (error 'invalid-buffer-supplied))
-  (when descriptor
-    (loop for scan across (descriptor-scans descriptor) do ;required if we reuse descriptors
-	 (setf (scan-x scan) 0
-	       (scan-y scan) 0)))
-  (let* ((image (or descriptor (make-descriptor)))
-	 (pos 0))
-    (setf (descriptor-byte-reader image) 
-	  (if cached-source-p
-	      (progn
-		(when (or (not (typep (descriptor-source-cache image) 'array))
-			  (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
-		  (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
-		(when stream ;; NULL stream means the cache in descriptor is already read
-		  (read-sequence (descriptor-source-cache image) stream))
-		#'(lambda ()
-		    (let ((cache (descriptor-source-cache image)))
-		      (declare #.*optimize*
-			       (type uint8-array cache)
-			       (type fixnum pos))
-		      (prog1 (the uint8 (aref cache pos)) (incf pos)))))
-	      #'(lambda ()
-		  (the uint8 (read-byte stream)))))
-    (unless (= (read-marker image) +M_SOI+)
-      (error 'unrecognized-file-format))
-    (let ((marker (interpret-markers image 0)))
-      (cond ((or (= +M_SOF0+ marker)
-		 (= +M_SOF2+ marker)) (decode-frame-beginning image nil)
-	     (values (descriptor-height image)
-		     (descriptor-width image)
-		     (descriptor-ncomp image)
-		     (descriptor-adobe-app14-transform image)))
-	    (t (error 'unsupported-jpeg-format :code marker))))))
+  (multiple-value-bind (nil-buffer height width ncomp adobe-app14-transform)
+      (apply #'decode-image stream
+             :decode-frame nil
+             (append
+              (when descriptor
+                `(:descriptor ,descriptor))
+              (when cached-source-p
+                `(:cached-source-p ,cached-source-p))))
+    (declare (ignore nil-buffer))
+    (values height width ncomp adobe-app14-transform)))
 
 (defun jpeg-file-dimensions (filename)
   "Return image height, width and number of components, plus the type of Adobe colorpsace transform"
