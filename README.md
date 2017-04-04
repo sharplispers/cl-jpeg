@@ -53,9 +53,9 @@ Returns an RGB conversion of the supplied CMYK image.
 
 Converts JPEG file to BMP file.
 
-## Ecoding
+## Encoding
 
-###`(ENCODE-IMAGE FILENAME IMAGE NCOMP H W &key SAMPLING Q-TABS Q-FACTOR)`
+### `(ENCODE-IMAGE FILENAME IMAGE NCOMP H W &key SAMPLING Q-TABS Q-FACTOR)`
 * FILENAME - output file name
 * IMAGE - input array of pixels
 * NCOMP - number of components in the image
@@ -66,7 +66,7 @@ Converts JPEG file to BMP file.
 
 Encodes the supplied image using the sampling specifier, quantization tables and quantization factor.
 
-###`(ENCODING-WRAPPER FILENAME IMAGE NCOMP H W &key (QUALITY 4))`
+### `(ENCODING-WRAPPER FILENAME IMAGE NCOMP H W &key (QUALITY 4))`
 * FILENAME - output file name
 * IMAGE - input array of pixels
 * NCOMP - number of components in the image
