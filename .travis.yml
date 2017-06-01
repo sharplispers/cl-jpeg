@@ -13,9 +13,16 @@ env:
     - LISP=cmucl
     - LISP=ecl
 
+
 matrix:
   allow_failures:
-    #- env: LISP=ecl
+    # Tests can fail on 32 bit lisps due to fixed point precision issues
+    - env: LISP=sbcl32
+    - env: LISP=ccl32
+    - env: LISP=clisp32
+    - env: LISP=allegro
+    - env: LISP=cmucl
+    - env: LISP=ecl
 
 install:
   - curl -L https://github.com/luismbo/cl-travis/raw/master/install.sh | sh
