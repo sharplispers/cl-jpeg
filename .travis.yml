@@ -1,0 +1,37 @@
+language: lisp
+
+env:
+  matrix:
+    - LISP=abcl
+    - LISP=allegro
+    - LISP=sbcl
+    - LISP=sbcl32
+    - LISP=ccl
+    - LISP=ccl32
+    - LISP=clisp
+    - LISP=clisp32
+    - LISP=cmucl
+    - LISP=ecl
+
+
+matrix:
+  allow_failures:
+    # Tests can fail on 32 bit lisps due to fixed point precision issues
+    - env: LISP=sbcl32
+    - env: LISP=ccl32
+    - env: LISP=clisp32
+    - env: LISP=allegro
+    - env: LISP=cmucl
+    - env: LISP=ecl
+
+install:
+  - curl -L https://github.com/luismbo/cl-travis/raw/master/install.sh | sh
+  - git clone https://github.com/sharplispers/cl-jpeg-tests.git ~/lisp/cl-jpeg-tests
+  - if [ "${LISP:(-2)}" = "32" ]; then
+      sudo apt-get install libc6-dev-i386;
+    fi
+
+script:
+  - cl -e '(ql:quickload :cl-jpeg-tests)
+           (unless (fiveam:run! :cl-jpeg :print-names nil)
+             (uiop:quit 1))'

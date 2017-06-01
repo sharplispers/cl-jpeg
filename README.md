@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/varjagg/cl-jpeg.svg?branch=master)](https://travis-ci.org/varjagg/cl-jpeg)
+
 # CL-JPEG
 Baseline JPEG codec written in Common Lisp. Up-to-date source is hosted on [GitHub](https://github.com/sharplispers/cl-jpeg).
 
