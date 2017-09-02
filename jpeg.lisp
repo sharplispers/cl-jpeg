@@ -1230,6 +1230,10 @@
   huffcode
   valptr)
 
+;in case setup fails somehow
+(defun dummy-byte-reader ()
+  (error 'jpeg-decoder-error))
+
 ;;; This structure contains all neccessary information about the decoded image
 (defstruct descriptor
   (restart-interval 0 :type fixnum)
@@ -1267,8 +1271,7 @@
        '(0  0  0  0  0  0  0  0)
        '(0  0  0  0  0  0  0  0))
       :type sint16-2d-array)	; Temporary workspace for IDCT
-  (byte-reader #'(lambda () ;in case setup fails somehow
-		   (error 'jpeg-decoder-error)) :type function)
+  (byte-reader #'dummy-byte-reader :type function)
   (source-cache)
   (adobe-app14-transform nil))
 
@@ -1950,18 +1953,24 @@ progressive DCT-based JPEGs."
   (let* ((image (or descriptor (make-descriptor)))
 	 (pos 0))
     (cond (cached-source-p
-           (when (or (not (typep (descriptor-source-cache image) 'array))
-                     (and (typep stream 'file-stream) (< (length (descriptor-source-cache image)) (file-length stream))))
-             (setf (descriptor-source-cache image) (make-array (file-length stream) :element-type 'uint8)))
-           (when stream ;; NULL stream means the cache in descriptor is already read
+           ;; if stream is a file-stream we know how to cache the
+           ;; source, but if not, we don't so we just punt and rely on
+           ;; the descriptor's supplied byte-reader to do the work
+           (when stream
+             (when (or (not (typep (descriptor-source-cache image) 'array))
+                       (and (< (length (descriptor-source-cache image))
+                               (file-length stream))))
+               (setf (descriptor-source-cache image)
+                     (make-array (file-length stream) :element-type 'uint8)))
              (read-sequence (descriptor-source-cache image) stream))
-           (let ((cache (descriptor-source-cache image)))
-             (setf (descriptor-byte-reader image)
-                   #'(lambda ()
-                       (declare #.*optimize*
-                                (type uint8-array cache)
-                                (type fixnum pos))
-                       (prog1 (aref cache pos) (incf pos))))))
+           (when (equalp (descriptor-byte-reader image) #'dummy-byte-reader)
+             (let ((cache (descriptor-source-cache image)))
+               (setf (descriptor-byte-reader image)
+                     #'(lambda ()
+                         (declare #.*optimize*
+                                  (type uint8-array cache)
+                                  (type fixnum pos))
+                         (prog1 (aref cache pos) (incf pos)))))))
           ;; if descriptor is NULL or the descriptor's byte-reader is
           ;; NULL, set it here.
           ((or (not descriptor)
