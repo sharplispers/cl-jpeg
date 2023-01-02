@@ -2,6 +2,7 @@
   (:use #:common-lisp)
   (:nicknames #:cl-jpeg)
   (:export #:encode-image
+	   #:encode-image-stream
            #:decode-stream
            #:decode-image
 	   #:jpeg-error #:jpeg-encoder-error #:jpeg-decoder-error #:unsupported-jpeg-format #:unrecognized-file-format
