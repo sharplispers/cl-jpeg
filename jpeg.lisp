@@ -1219,7 +1219,11 @@
   (y 0 :type fixnum) ; positions
   (cdesc (make-array 4
                      :initial-contents (loop repeat 4 collect (list 0 0)))
-         :type (simple-array t (*)))) ; descriptors of all components in the scan
+         :type (simple-array t (*))) ; descriptors of all components in the scan
+  (ss 0 :type fixnum)   ; spectral selection start
+  (se 63 :type fixnum)  ; spectral selection end
+  (ah 0 :type fixnum)   ; successive approximation high
+  (al 0 :type fixnum))  ; successive approximation low
 
 ;;; Contains huffman decoding tables
 (defstruct huffstruct
@@ -1270,7 +1274,36 @@
   (byte-reader #'(lambda () ;in case setup fails somehow
 		   (error 'jpeg-decoder-error)) :type function)
   (source-cache)
-  (adobe-app14-transform nil))
+  (adobe-app14-transform nil)
+  (progressive-p nil)       ; t when decoding SOF2 (progressive) frame
+  (coef-buffers nil)        ; vector of per-component fixnum arrays for DCT coefficients
+  (blocks-per-row nil)      ; vector of per-component block-row counts
+  (blocks-per-col nil))     ; vector of per-component block-column counts
+
+(defun allocate-coef-buffers (image Hmax Vmax)
+  "Allocate per-component coefficient buffers for progressive decoding."
+  (let* ((ncomp (descriptor-ncomp image))
+         (width (descriptor-width image))
+         (height (descriptor-height image))
+         (mcus-x (ceiling width (* Hmax 8)))
+         (mcus-y (ceiling height (* Vmax 8)))
+         (buffers (make-array ncomp))
+         (bpr (make-array ncomp))
+         (bpc (make-array ncomp)))
+    (loop for c fixnum from 0 below ncomp
+          for h fixnum = (aref (descriptor-H image) c)
+          for v fixnum = (aref (descriptor-V image) c)
+          for blocks-x fixnum = (* mcus-x h)
+          for blocks-y fixnum = (* mcus-y v)
+          do (setf (aref bpr c) blocks-x)
+             (setf (aref bpc c) blocks-y)
+             (setf (aref buffers c)
+                   (make-array (* blocks-x blocks-y 64)
+                               :element-type 'fixnum
+                               :initial-element 0)))
+    (setf (descriptor-coef-buffers image) buffers)
+    (setf (descriptor-blocks-per-row image) bpr)
+    (setf (descriptor-blocks-per-col image) bpc)))
 
 (defun read-jpeg-byte (image)
   (declare #.*optimize*)
@@ -1781,6 +1814,400 @@
              (incf (scan-y scan) y-growth)
              (setf (scan-x scan) 0))))))
 
+;;; ============================================================
+;;; Progressive JPEG decoding functions
+;;; ============================================================
+
+;;; Decodes DC coefficient for first DC scan (Ss=0, Se=0, Ah=0)
+(defun decode-dc-first (coef-buf offset al dc-table nextbit image preds comp)
+  "Decode DC coefficient for first scan. Stores ash(value, al) into coef buffer."
+  (declare #.*optimize*
+           (type fixnum offset al comp)
+           (type (simple-array fixnum (*)) coef-buf)
+           (type (simple-array sint16 (*)) preds)
+           (type huffstruct dc-table)
+           (type function nextbit))
+  (let* ((tt (decode (huffstruct-maxcode dc-table)
+                     (huffstruct-mincode dc-table)
+                     (huffstruct-valptr dc-table)
+                     (huffstruct-huffval dc-table) nextbit image))
+         (diff (extend (recieve tt nextbit image) tt)))
+    (declare (type fixnum tt diff))
+    (incf diff (aref preds comp))
+    (setf (aref preds comp) diff)
+    (setf (aref coef-buf offset) (ash diff al))))
+
+;;; Decodes DC refinement scan (Ss=0, Se=0, Ah>0) - one raw bit per block
+(defun decode-dc-refine (coef-buf offset al nextbit image)
+  "Refine DC coefficient: read one bit and OR into position al."
+  (declare #.*optimize*
+           (type fixnum offset al)
+           (type (simple-array fixnum (*)) coef-buf)
+           (type function nextbit))
+  (let ((bit (funcall nextbit image)))
+    (declare (type fixnum bit))
+    (when (= bit 1)
+      (setf (aref coef-buf offset)
+            (logior (aref coef-buf offset) (ash 1 al))))))
+
+;;; Decodes AC coefficients for first AC scan (Ss>0, Ah=0) with EOBRUN
+(defun decode-ac-first (coef-buf offset ss se al ac-table nextbit image eobrun)
+  "Decode AC first scan for coefficients ss..se with point transform al.
+   Returns updated eobrun value."
+  (declare #.*optimize*
+           (type fixnum offset ss se al eobrun)
+           (type (simple-array fixnum (*)) coef-buf)
+           (type huffstruct ac-table)
+           (type function nextbit))
+  (when (> eobrun 0)
+    (return-from decode-ac-first (1- eobrun)))
+  (let ((k ss))
+    (declare (type fixnum k))
+    (loop while (<= k se) do
+          (let* ((rs (decode (huffstruct-maxcode ac-table)
+                             (huffstruct-mincode ac-table)
+                             (huffstruct-valptr ac-table)
+                             (huffstruct-huffval ac-table) nextbit image))
+                 (s (logand rs 15))
+                 (r (ash rs -4)))
+            (declare (type fixnum rs s r))
+            (cond
+              ;; Non-zero coefficient
+              ((> s 0)
+               (incf k r)
+               (setf (aref coef-buf (+ offset k))
+                     (ash (extend (recieve s nextbit image) s) al))
+               (incf k))
+              ;; ZRL: skip 16 zeros
+              ((= r 15)
+               (incf k 16))
+              ;; EOBn: end of band run
+              (t
+               (let ((run (ash 1 r)))
+                 (declare (type fixnum run))
+                 (when (> r 0)
+                   (incf run (recieve r nextbit image)))
+                 ;; Current block is the first in the run
+                 (return-from decode-ac-first (1- run))))))))
+  0)
+
+;;; Decodes AC refinement scan (Ss>0, Ah>0)
+(defun decode-ac-refine (coef-buf offset ss se al ac-table nextbit image eobrun)
+  "Refine AC coefficients with correction bits and new coefficient introduction.
+   Returns updated eobrun value."
+  (declare #.*optimize*
+           (type fixnum offset ss se al eobrun)
+           (type (simple-array fixnum (*)) coef-buf)
+           (type huffstruct ac-table)
+           (type function nextbit))
+  (let ((p1 (ash 1 al))
+        (m1 (- (ash 1 al)))
+        (k ss))
+    (declare (type fixnum p1 m1 k))
+    (flet ((apply-correction (pos)
+             "Read one correction bit for a nonzero coefficient at coef-buf[pos]."
+             (declare (type fixnum pos))
+             (let ((coeff (aref coef-buf pos)))
+               (declare (type fixnum coeff))
+               (when (/= coeff 0)
+                 (when (= (funcall nextbit image) 1)
+                   (if (> coeff 0)
+                       (when (zerop (logand coeff p1))
+                         (incf (aref coef-buf pos) p1))
+                       (when (zerop (logand coeff p1))
+                         (incf (aref coef-buf pos) m1))))
+                 t))))
+      ;; If in an EOB run, just apply correction bits to existing nonzeros
+      (when (> eobrun 0)
+        (loop for j fixnum from ss to se do
+              (apply-correction (+ offset j)))
+        (return-from decode-ac-refine (1- eobrun)))
+      ;; Decode new symbols
+      (loop while (<= k se) do
+            (let* ((rs (decode (huffstruct-maxcode ac-table)
+                               (huffstruct-mincode ac-table)
+                               (huffstruct-valptr ac-table)
+                               (huffstruct-huffval ac-table) nextbit image))
+                   (s (logand rs 15))
+                   (r (ash rs -4)))
+              (declare (type fixnum rs s r))
+              (cond
+                ;; s=1: new nonzero coefficient
+                ((= s 1)
+                 (let ((sign-bit (funcall nextbit image)))
+                   (declare (type fixnum sign-bit))
+                   (let ((new-value (if (= sign-bit 1) p1 m1)))
+                     (declare (type fixnum new-value))
+                     ;; Skip r zero-valued positions (applying corrections to nonzeros)
+                     (loop while (and (<= k se) (> r 0)) do
+                           (let ((coeff (aref coef-buf (+ offset k))))
+                             (declare (type fixnum coeff))
+                             (if (/= coeff 0)
+                                 (apply-correction (+ offset k))
+                                 (decf r)))
+                           (incf k))
+                     ;; Skip past remaining nonzeros to find the zero position
+                     (loop while (and (<= k se)
+                                      (/= (aref coef-buf (+ offset k)) 0))
+                           do (apply-correction (+ offset k))
+                              (incf k))
+                     ;; Place the new coefficient
+                     (when (<= k se)
+                       (setf (aref coef-buf (+ offset k)) new-value)
+                       (incf k)))))
+                ;; s=0, r=15: ZRL with correction bits
+                ((= r 15)
+                 (let ((zeros-to-skip 16))
+                   (declare (type fixnum zeros-to-skip))
+                   (loop while (and (<= k se) (> zeros-to-skip 0)) do
+                         (let ((coeff (aref coef-buf (+ offset k))))
+                           (declare (type fixnum coeff))
+                           (if (/= coeff 0)
+                               (apply-correction (+ offset k))
+                               (decf zeros-to-skip)))
+                         (incf k))))
+                ;; s=0, r<15: EOBn
+                (t
+                 (let ((run (ash 1 r)))
+                   (declare (type fixnum run))
+                   (when (> r 0)
+                     (incf run (recieve r nextbit image)))
+                   ;; Apply correction bits to remaining nonzeros in this block
+                   (loop while (<= k se) do
+                         (apply-correction (+ offset k))
+                         (incf k))
+                   (return-from decode-ac-refine (1- run)))))))
+      ;; Normal completion (no EOB)
+      0)))
+
+;;; Main progressive chunk decoder - processes one restart interval
+(defun decode-progressive-chunk (image scan)
+  "Decode one restart interval of a progressive scan into coefficient buffers."
+  (let* ((nextbit (make-nextbit 0 0))
+         (ncomp (scan-ncomp scan))
+         (ss (scan-ss scan))
+         (se (scan-se scan))
+         (ah (scan-ah scan))
+         (al (scan-al scan))
+         (dc-scan-p (and (zerop ss) (zerop se)))
+         (first-scan-p (zerop ah))
+         ;; Build component mapping: scan component index -> image component index
+         (comp-indices (make-array ncomp :element-type 'fixnum))
+         ;; Sampling factors for components in this scan
+         (fr (make-array ncomp :initial-contents
+                         (loop for i fixnum from 0 below ncomp
+                               for cid fixnum = (first (aref (scan-cdesc scan) i))
+                               for pos fixnum = (position cid (descriptor-cid image))
+                               do (setf (aref comp-indices i) pos)
+                               collecting (list (aref (descriptor-H image) pos)
+                                                (aref (descriptor-V image) pos)))))
+         (Hmax (loop for entry across fr maximize (the fixnum (first entry))))
+         (Vmax (loop for entry across fr maximize (the fixnum (second entry))))
+         (mcus-x (ceiling (descriptor-width image) (* Hmax 8)))
+         (mcus-y (ceiling (descriptor-height image) (* Vmax 8)))
+         ;; Huffman tables for each component in scan
+         ;; huff-ac stores DC tables (tc=0), huff-dc stores AC tables (tc=1)
+         ;; For DC scans use Td (high nibble) to select DC table from huff-ac
+         ;; For AC scans use Ta (low nibble) to select AC table from huff-dc
+         (dc-tables (when dc-scan-p
+                      (make-array ncomp
+                        :initial-contents
+                        (loop for i fixnum from 0 below ncomp
+                              for td fixnum = (ash (the fixnum (second (aref (scan-cdesc scan) i))) -4)
+                              collecting (aref (descriptor-huff-ac image) td)))))
+         (ac-tables (when (not dc-scan-p)
+                      (make-array ncomp
+                        :initial-contents
+                        (loop for i fixnum from 0 below ncomp
+                              for ta fixnum = (logand (second (aref (scan-cdesc scan) i)) 15)
+                              collecting (aref (descriptor-huff-dc image) ta)))))
+         (preds (make-array ncomp :initial-element 0 :element-type 'sint16))
+         (eobrun 0))
+    (declare #.*optimize*
+             (type fixnum ncomp ss se ah al Hmax Vmax mcus-x mcus-y eobrun)
+             (type (simple-array fixnum (*)) comp-indices)
+             (type (simple-array sint16 (*)) preds))
+    ;; scan-x is used as a linear MCU/block counter to persist across restart intervals
+    (catch 'marker
+      (if (= ncomp 1)
+          ;; Non-interleaved scan: raster order over all blocks of one component
+          (let* ((ci (aref comp-indices 0))
+                 (coef-buf (aref (descriptor-coef-buffers image) ci))
+                 (bpr (aref (descriptor-blocks-per-row image) ci))
+                 (bpc (aref (descriptor-blocks-per-col image) ci))
+                 (total-blocks (* bpr bpc))
+                 (dc-tab (when dc-tables (aref dc-tables 0)))
+                 (ac-tab (when ac-tables (aref ac-tables 0))))
+            (declare (type fixnum ci bpr bpc total-blocks)
+                     (type (simple-array fixnum (*)) coef-buf))
+            (loop for block-idx fixnum from (scan-x scan) below total-blocks
+                  for offset fixnum = (* block-idx 64) do
+                  (cond
+                    ;; DC first
+                    ((and dc-scan-p first-scan-p)
+                     (decode-dc-first coef-buf offset al dc-tab nextbit image preds 0))
+                    ;; DC refine
+                    (dc-scan-p
+                     (decode-dc-refine coef-buf offset al nextbit image))
+                    ;; AC first
+                    (first-scan-p
+                     (setf eobrun (decode-ac-first coef-buf offset ss se al ac-tab nextbit image eobrun)))
+                    ;; AC refine
+                    (t
+                     (setf eobrun (decode-ac-refine coef-buf offset ss se al ac-tab nextbit image eobrun))))
+                  (setf (scan-x scan) (1+ block-idx))))
+          ;; Interleaved scan (DC only - AC scans must be non-interleaved per spec)
+          (let ((total-mcus (* mcus-x mcus-y)))
+            (declare (type fixnum total-mcus))
+            (loop for mcu-idx fixnum from (scan-x scan) below total-mcus
+                  for mcu-x fixnum = (mod mcu-idx mcus-x)
+                  for mcu-y fixnum = (floor mcu-idx mcus-x) do
+                  (loop for comp fixnum from 0 below ncomp
+                        for ci fixnum = (aref comp-indices comp)
+                        for coef-buf = (aref (descriptor-coef-buffers image) ci)
+                        for bpr fixnum = (aref (descriptor-blocks-per-row image) ci)
+                        for blocks-y fixnum = (second (aref fr comp))
+                        for blocks-x fixnum = (first (aref fr comp))
+                        for dc-tab = (aref dc-tables comp) do
+                        (loop for by fixnum from 0 below blocks-y do
+                              (loop for bx fixnum from 0 below blocks-x
+                                    for block-row fixnum = (+ (* mcu-y blocks-y) by)
+                                    for block-col fixnum = (+ (* mcu-x blocks-x) bx)
+                                    for block-idx fixnum = (+ (* block-row bpr) block-col)
+                                    for offset fixnum = (* block-idx 64) do
+                                    (if first-scan-p
+                                        (decode-dc-first coef-buf offset al dc-tab nextbit image preds comp)
+                                        (decode-dc-refine coef-buf offset al nextbit image)))))
+                  (setf (scan-x scan) (1+ mcu-idx))))))))
+
+;;; Reads SOS header and decodes one progressive scan
+(defun decode-progressive-scan (image)
+  "Read SOS header and decode one progressive scan into coefficient buffers."
+  (let ((scan (make-scan)))
+    (read-jpeg-byte image) ; length
+    (read-jpeg-byte image)
+    (let ((ncomp (read-jpeg-byte image)))
+      (setf (scan-ncomp scan) ncomp)
+      (loop for j fixnum from 0 below ncomp do
+            (setf (first (aref (scan-cdesc scan) j)) (read-jpeg-byte image))
+            (setf (second (aref (scan-cdesc scan) j)) (read-jpeg-byte image))))
+    (setf (scan-ss scan) (read-jpeg-byte image))
+    (setf (scan-se scan) (read-jpeg-byte image))
+    (let ((ahal (read-jpeg-byte image)))
+      (setf (scan-ah scan) (ash ahal -4))
+      (setf (scan-al scan) (logand ahal 15)))
+    (if (= (descriptor-restart-interval image) 0)
+        (decode-progressive-chunk image scan)
+      (loop for term = (decode-progressive-chunk image scan)
+            while (eq 'restart term)
+            finally (return term)))))
+
+;;; Convert accumulated coefficients to pixel data
+(defun finalize-progressive (image)
+  "Run IDCT on all accumulated coefficients and write to pixel buffer."
+  (let* ((ncomp (descriptor-ncomp image))
+         (nwidth (mul (descriptor-width image) ncomp))
+         (dend (mul (descriptor-height image) nwidth))
+         (zzbuf (make-array 64 :element-type 'sint16 :initial-element 0))
+         (block-2d (2d-sint16-array
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)
+                    '(0  0  0  0  0  0  0  0)))
+         (frl (loop for i fixnum from 0 below ncomp
+                    collecting (list (aref (descriptor-H image) i)
+                                     (aref (descriptor-V image) i))))
+         (Hmax (loop for entry in frl maximize (first entry)))
+         (Vmax (loop for entry in frl maximize (second entry)))
+         (freqs (convert-sampling frl Hmax Vmax))
+         (scan (make-scan)))
+    (declare (type fixnum ncomp nwidth dend Hmax Vmax)
+             (type sint16-array zzbuf)
+             (type sint16-2d-array block-2d))
+    ;; Set up inverse sampling frequencies
+    (loop for entry across freqs
+          for i fixnum from 0 do
+          (setf (aref (descriptor-iH image) i) (first entry))
+          (setf (aref (descriptor-iV image) i) (second entry)))
+    ;; Process blocks in MCU order (same order as decode-chunk/upsample expects)
+    (let ((mcus-x (ceiling (descriptor-width image) (mul Hmax 8)))
+          (mcus-y (ceiling (descriptor-height image) (mul Vmax 8))))
+      (declare (type fixnum mcus-x mcus-y))
+      (setf (scan-x scan) 0 (scan-y scan) 0)
+      (loop for mcu-y fixnum from 0 below mcus-y do
+            (loop for mcu-x fixnum from 0 below mcus-x do
+                  (loop for comp fixnum from 0 below ncomp
+                        for coef-buf = (aref (descriptor-coef-buffers image) comp)
+                        for bpr fixnum = (aref (descriptor-blocks-per-row image) comp)
+                        for q-tab = (aref (descriptor-qtables image)
+                                          (aref (descriptor-qdest image) comp))
+                        for h-samp fixnum = (aref (descriptor-H image) comp)
+                        for v-samp fixnum = (aref (descriptor-V image) comp)
+                        for H fixnum = (first (aref freqs comp))
+                        for V fixnum = (second (aref freqs comp))
+                        for nw fixnum = (mul nwidth V)
+                        for nx fixnum = (mul ncomp H) do
+                        (loop for by fixnum from 0 below v-samp
+                              for y-pos fixnum from (mul (ash by 3) V) by (ash V 3) do
+                              (loop for bx fixnum from 0 below h-samp
+                                    for x-pos fixnum from (mul (ash bx 3) H) by (ash H 3)
+                                    for block-row fixnum = (plus (mul mcu-y v-samp) by)
+                                    for block-col fixnum = (plus (mul mcu-x h-samp) bx)
+                                    for block-idx fixnum = (plus (mul block-row bpr) block-col)
+                                    for offset fixnum = (mul block-idx 64) do
+                                    ;; Copy coefficients to zigzag buffer
+                                    (loop for k fixnum from 0 below 64 do
+                                          (setf (aref zzbuf k)
+                                                (the sint16 (aref coef-buf (plus offset k)))))
+                                    ;; Inverse zigzag to 8x8
+                                    (izigzag zzbuf block-2d)
+                                    ;; Bounds check before IDCT and upsample
+                                    (when (and (< (plus x-pos (scan-x scan)) (descriptor-width image))
+                                               (< (plus y-pos (scan-y scan)) (descriptor-height image)))
+                                      ;; IDCT + dequantization
+                                      (inverse-llm-dct block-2d q-tab (descriptor-ws image))
+                                      ;; Write pixels to buffer
+                                      (upsample image scan block-2d x-pos y-pos
+                                                H V comp nwidth nw nx dend)))))
+                  (incf (scan-x scan) (ash Hmax 3))
+                  (when (<= (descriptor-width image) (scan-x scan))
+                    (incf (scan-y scan) (ash Vmax 3))
+                    (setf (scan-x scan) 0)))))))
+
+;;; Progressive frame decoding subroutine
+(defun decode-progressive-frame (image buffer)
+  "Decode a progressive JPEG frame (SOF2)."
+  (decode-frame-beginning image buffer)
+  (loop for i fixnum from 0 below (descriptor-ncomp image)
+        with hv fixnum do
+        (setf (aref (descriptor-cid image) i) (read-jpeg-byte image))
+        (setf hv (read-jpeg-byte image))
+        (setf (aref (descriptor-H image) i) (ash hv -4))
+        (setf (aref (descriptor-V image) i) (logand hv 7))
+        (setf (aref (descriptor-qdest image) i) (read-jpeg-byte image)))
+  (let* ((frl (loop for i fixnum from 0 below (descriptor-ncomp image)
+                    collecting (list (aref (descriptor-H image) i)
+                                     (aref (descriptor-V image) i))))
+         (Hmax (loop for entry in frl maximize (first entry)))
+         (Vmax (loop for entry in frl maximize (second entry))))
+    ;; Allocate coefficient buffers
+    (setf (descriptor-progressive-p image) t)
+    (allocate-coef-buffers image Hmax Vmax)
+    ;; Process scans until EOI
+    (loop with term fixnum = 0 do
+          (let ((marker (interpret-markers image term)))
+            (cond ((= marker +M_SOS+)
+                   (setf term (or (decode-progressive-scan image) 0)))
+                  ((= marker +M_EOI+)
+                   (return))
+                  (t (error 'unsupported-jpeg-frame-marker)))))
+    ;; All scans done - finalize: IDCT and write pixels
+    (finalize-progressive image)))
+
 ;;; Scan decoding subroutine
 (defun decode-scan (image i)
   (let ((scan (aref (descriptor-scans image) i))
@@ -1799,9 +2226,11 @@
           for j fixnum from 0 below ncomp do
           (setf (first (aref (scan-cdesc scan) j)) (read-jpeg-byte image)) ; component ID
           (setf (second (aref (scan-cdesc scan) j)) (read-jpeg-byte image))) ; Td and Ta nibbles
-    (read-jpeg-byte image)
-    (read-jpeg-byte image)
-    (read-jpeg-byte image)
+    (setf (scan-ss scan) (read-jpeg-byte image))          ; spectral selection start
+    (setf (scan-se scan) (read-jpeg-byte image))          ; spectral selection end
+    (let ((ahal (read-jpeg-byte image)))                   ; successive approximation
+      (setf (scan-ah scan) (ash ahal -4))
+      (setf (scan-al scan) (logand ahal 15)))
     (if (= (descriptor-restart-interval image) 0)
         (decode-chunk image scan zzbuf) ; reading the whole scan at once
       (loop for term = (decode-chunk image scan zzbuf)
@@ -1939,8 +2368,8 @@
 	       (setf term (decode-scan image j)))))
 
 (defun decode-stream (stream &key buffer (colorspace-conversion t) descriptor cached-source-p (decode-frame t))
-  "Return image array, height, width, number of components and APP14 Adobe transform. Does not support
-progressive DCT-based JPEGs."
+  "Return image array, height, width, number of components and APP14 Adobe transform.
+Supports both baseline and progressive DCT-based JPEGs."
   (when (and (null stream) (not cached-source-p))
     (error 'invalid-buffer-supplied))
   (when descriptor
@@ -1973,9 +2402,17 @@ progressive DCT-based JPEGs."
       (error 'unrecognized-file-format))
      (let ((marker (interpret-markers image 0)))
        (if decode-frame
-           ;; decode-frame currently only supports baseline DCT frames
            (cond ((= +M_SOF0+ marker)
                   (decode-frame image buffer)
+                  (when colorspace-conversion
+                    (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
+                           (inverse-colorspace-convert image))
+                          ((eql (descriptor-adobe-app14-transform image) :ycck-cmyk)
+                           (ycck-cmyk-convert image))
+                          ((= (descriptor-ncomp image) 3)
+                           (inverse-colorspace-convert image)))))
+                 ((= +M_SOF2+ marker)
+                  (decode-progressive-frame image buffer)
                   (when colorspace-conversion
                     (cond ((and (= (descriptor-ncomp image) 3) (eql (descriptor-adobe-app14-transform image) :ycbcr-rgb))
                            (inverse-colorspace-convert image))
