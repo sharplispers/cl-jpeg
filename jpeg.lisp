@@ -1982,7 +1982,9 @@
 
 ;;; Main progressive chunk decoder - processes one restart interval
 (defun decode-progressive-chunk (image scan)
-  "Decode one restart interval of a progressive scan into coefficient buffers."
+  "Decode one restart interval of a progressive scan into coefficient buffers.
+Returns :RESTART when an interval ended with more data units left in the scan,
+NIL when the scan is complete, or the marker thrown by the bit reader."
   (let* ((nextbit (make-nextbit 0 0))
          (ncomp (scan-ncomp scan))
          (ss (scan-ss scan))
@@ -2001,8 +2003,11 @@
                                do (setf (aref comp-indices i) pos)
                                collecting (list (aref (descriptor-H image) pos)
                                                 (aref (descriptor-V image) pos)))))
-         (Hmax (loop for entry across fr maximize (the fixnum (first entry))))
-         (Vmax (loop for entry across fr maximize (the fixnum (second entry))))
+         ;; MCU geometry is defined by the frame's maximum sampling factors
+         (Hmax (loop for i fixnum from 0 below (descriptor-ncomp image)
+                     maximize (the fixnum (aref (descriptor-H image) i))))
+         (Vmax (loop for i fixnum from 0 below (descriptor-ncomp image)
+                     maximize (the fixnum (aref (descriptor-V image) i))))
          (mcus-x (ceiling (descriptor-width image) (* Hmax 8)))
          (mcus-y (ceiling (descriptor-height image) (* Vmax 8)))
          ;; Huffman tables for each component in scan
@@ -2022,9 +2027,19 @@
                               for ta fixnum = (logand (second (aref (scan-cdesc scan) i)) 15)
                               collecting (aref (descriptor-huff-dc image) ta)))))
          (preds (make-array ncomp :initial-element 0 :element-type 'sint16))
-         (eobrun 0))
+         (eobrun 0)
+         (ri (descriptor-restart-interval image))
+         ;; Non-interleaved scans cover only the component's own blocks,
+         ;; not the MCU-padded block grid (A.2.2 of the spec)
+         (comp-bw (when (= ncomp 1)
+                    (ceiling (ceiling (* (descriptor-width image) (first (aref fr 0))) Hmax) 8)))
+         (comp-bh (when (= ncomp 1)
+                    (ceiling (ceiling (* (descriptor-height image) (second (aref fr 0))) Vmax) 8)))
+         (total-units (if (= ncomp 1) (* comp-bw comp-bh) (* mcus-x mcus-y)))
+         (start (scan-x scan))
+         (end (if (zerop ri) total-units (min total-units (+ start ri)))))
     (declare #.*optimize*
-             (type fixnum ncomp ss se ah al Hmax Vmax mcus-x mcus-y eobrun)
+             (type fixnum ncomp ss se ah al Hmax Vmax mcus-x mcus-y eobrun ri total-units start end)
              (type (simple-array fixnum (*)) comp-indices)
              (type (simple-array sint16 (*)) preds))
     ;; scan-x is used as a linear MCU/block counter to persist across restart intervals
@@ -2034,14 +2049,12 @@
           (let* ((ci (aref comp-indices 0))
                  (coef-buf (aref (descriptor-coef-buffers image) ci))
                  (bpr (aref (descriptor-blocks-per-row image) ci))
-                 (bpc (aref (descriptor-blocks-per-col image) ci))
-                 (total-blocks (* bpr bpc))
                  (dc-tab (when dc-tables (aref dc-tables 0)))
                  (ac-tab (when ac-tables (aref ac-tables 0))))
-            (declare (type fixnum ci bpr bpc total-blocks)
+            (declare (type fixnum ci bpr comp-bw)
                      (type (simple-array fixnum (*)) coef-buf))
-            (loop for block-idx fixnum from (scan-x scan) below total-blocks
-                  for offset fixnum = (* block-idx 64) do
+            (loop for unit fixnum from start below end
+                  for offset fixnum = (* (+ (* (floor unit comp-bw) bpr) (mod unit comp-bw)) 64) do
                   (cond
                     ;; DC first
                     ((and dc-scan-p first-scan-p)
@@ -2055,35 +2068,38 @@
                     ;; AC refine
                     (t
                      (setf eobrun (decode-ac-refine coef-buf offset ss se al ac-tab nextbit image eobrun))))
-                  (setf (scan-x scan) (1+ block-idx))))
+                  (setf (scan-x scan) (1+ unit))))
           ;; Interleaved scan (DC only - AC scans must be non-interleaved per spec)
-          (let ((total-mcus (* mcus-x mcus-y)))
-            (declare (type fixnum total-mcus))
-            (loop for mcu-idx fixnum from (scan-x scan) below total-mcus
-                  for mcu-x fixnum = (mod mcu-idx mcus-x)
-                  for mcu-y fixnum = (floor mcu-idx mcus-x) do
-                  (loop for comp fixnum from 0 below ncomp
-                        for ci fixnum = (aref comp-indices comp)
-                        for coef-buf = (aref (descriptor-coef-buffers image) ci)
-                        for bpr fixnum = (aref (descriptor-blocks-per-row image) ci)
-                        for blocks-y fixnum = (second (aref fr comp))
-                        for blocks-x fixnum = (first (aref fr comp))
-                        for dc-tab = (aref dc-tables comp) do
-                        (loop for by fixnum from 0 below blocks-y do
-                              (loop for bx fixnum from 0 below blocks-x
-                                    for block-row fixnum = (+ (* mcu-y blocks-y) by)
-                                    for block-col fixnum = (+ (* mcu-x blocks-x) bx)
-                                    for block-idx fixnum = (+ (* block-row bpr) block-col)
-                                    for offset fixnum = (* block-idx 64) do
-                                    (if first-scan-p
-                                        (decode-dc-first coef-buf offset al dc-tab nextbit image preds comp)
-                                        (decode-dc-refine coef-buf offset al nextbit image)))))
-                  (setf (scan-x scan) (1+ mcu-idx))))))))
+          (loop for mcu-idx fixnum from start below end
+                for mcu-x fixnum = (mod mcu-idx mcus-x)
+                for mcu-y fixnum = (floor mcu-idx mcus-x) do
+                (loop for comp fixnum from 0 below ncomp
+                      for ci fixnum = (aref comp-indices comp)
+                      for coef-buf = (aref (descriptor-coef-buffers image) ci)
+                      for bpr fixnum = (aref (descriptor-blocks-per-row image) ci)
+                      for blocks-y fixnum = (second (aref fr comp))
+                      for blocks-x fixnum = (first (aref fr comp))
+                      for dc-tab = (aref dc-tables comp) do
+                      (loop for by fixnum from 0 below blocks-y do
+                            (loop for bx fixnum from 0 below blocks-x
+                                  for block-row fixnum = (+ (* mcu-y blocks-y) by)
+                                  for block-col fixnum = (+ (* mcu-x blocks-x) bx)
+                                  for block-idx fixnum = (+ (* block-row bpr) block-col)
+                                  for offset fixnum = (* block-idx 64) do
+                                  (if first-scan-p
+                                      (decode-dc-first coef-buf offset al dc-tab nextbit image preds comp)
+                                      (decode-dc-refine coef-buf offset al nextbit image)))))
+                (setf (scan-x scan) (1+ mcu-idx))))
+      (when (< (scan-x scan) total-units)
+        :restart))))
 
 ;;; Reads SOS header and decodes one progressive scan
 (defun decode-progressive-scan (image)
-  "Read SOS header and decode one progressive scan into coefficient buffers."
-  (let ((scan (make-scan)))
+  "Read SOS header and decode one progressive scan into coefficient buffers.
+Returns the marker that terminated the scan, or 0 if it ended cleanly."
+  (let ((scan (make-scan))
+        (ri (descriptor-restart-interval image)))
+    (declare (type fixnum ri))
     (read-jpeg-byte image) ; length
     (read-jpeg-byte image)
     (let ((ncomp (read-jpeg-byte image)))
@@ -2096,11 +2112,24 @@
     (let ((ahal (read-jpeg-byte image)))
       (setf (scan-ah scan) (ash ahal -4))
       (setf (scan-al scan) (logand ahal 15)))
-    (if (= (descriptor-restart-interval image) 0)
-        (decode-progressive-chunk image scan)
-      (loop for term = (decode-progressive-chunk image scan)
-            while (eq 'restart term)
-            finally (return term)))))
+    ;; Progressive data units may consume no bits at all (EOB runs) or a
+    ;; single bit (DC refinement), so restart intervals can't be delimited by
+    ;; waiting for the bit reader to hit a marker: count data units instead.
+    (loop for term = (decode-progressive-chunk image scan) do
+          (case term
+            ((nil) (return 0))
+            ;; Interval completed: consume its RSTn marker
+            (:restart
+             (let ((mk (read-marker image)))
+               (unless (<= +M_RST0+ mk +M_RST7+)
+                 (return mk))))
+            ;; Bit reader ran into RSTn early (corrupt data): resync at the
+            ;; start of the next interval
+            (restart
+             (if (zerop ri)
+                 (return 0)
+                 (setf (scan-x scan) (* (1+ (floor (scan-x scan) ri)) ri))))
+            (t (return term))))))
 
 ;;; Convert accumulated coefficients to pixel data
 (defun finalize-progressive (image)
